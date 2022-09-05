@@ -1,0 +1,8 @@
+---
+setup:
+  project: CL-code
+  entity: mweyssow
+  mode: online
+watch:
+  log: all
+  freq: 100

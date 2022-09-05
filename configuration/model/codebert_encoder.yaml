@@ -1,0 +1,7 @@
+---
+config: codebert_encoder
+architecture: encoder
+
+model_name_or_path: microsoft/codebert-base
+tokenizer_name_or_path: microsoft/codebert-base
+checkpoint: null

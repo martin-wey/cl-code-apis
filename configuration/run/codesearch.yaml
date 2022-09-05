@@ -1,0 +1,18 @@
+---
+task: codesearch
+dataset_dir: datasets/codesearchnet
+dataset_lang: python
+
+train_batch_size: 64
+valid_batch_size: 64
+test_batch_size: 1000
+
+max_code_length: 256
+max_query_length: 128
+
+learning_rate: 5e-5
+epochs: 10
+patience: 3
+
+do_train: False
+do_test: False

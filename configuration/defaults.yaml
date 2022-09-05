@@ -1,0 +1,15 @@
+---
+defaults:
+  - _self_
+  - run: codesearch
+  - model: codebert_encoder
+  - wandb: default
+  - hydra: default
+
+run:
+  base_path: null   # leave it to null
+  seed: 42
+
+device: cuda
+parallel: False
+use_wandb: True

@@ -1,0 +1,3 @@
+---
+run:
+  dir: outputs/${model.config}_${run.dataset_lang}/${now:%Y-%m-%d_%H-%M-%S}
