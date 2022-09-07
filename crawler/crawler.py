@@ -15,7 +15,7 @@ headers = {'Authorization': f'token {git_credentials}'}
 NUM_REPOS = 10
 MIN_STARS = 50
 LAST_ACTIVE = '2020-01-01'
-LANGUAGE = 'python' if len(sys.argv) <= 2 else sys.argv[2]  # Default to Java, if none passed.
+LANGUAGE = 'python' if len(sys.argv) <= 2 else sys.argv[2]  # Default to Python, if none passed.
 REQUIREMENTS_FILE = {
     'python': 'requirements.txt'
 }
