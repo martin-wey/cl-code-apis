@@ -11,7 +11,6 @@ import json
 git_credentials = sys.argv[1]
 headers = {'Authorization': f'token {git_credentials}'}
 
-# Constants & language argument.
 NUM_REPOS = 10
 MIN_STARS = 50
 LAST_ACTIVE = '2020-01-01'

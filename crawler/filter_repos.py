@@ -45,10 +45,10 @@ def main():
 
 def is_lib_in_repo_python(repo_libs):
     found = False
+    search_lib_dist = pkg_resources.get_distribution(SEARCH_LIB)
     for lib in repo_libs:
         # https://setuptools.pypa.io/en/latest/pkg_resources.html#requirement-methods-and-attributes
-        # @todo: this is buggy for some reason ?
-        if lib.__contains__(SEARCH_LIB):
+        if lib.__contains__(search_lib_dist):
             found = True
             break
     return found
