@@ -1,16 +1,16 @@
-import random
 import logging
+import os
+import random
 
 import hydra
 import numpy as np
 import omegaconf
 import torch
 import wandb
+from datasets import load_dataset
 from transformers import AutoModel, AutoTokenizer
 
-from datasets import load_dataset
-from utils import remove_comments_and_docstrings
-from tasks import codesearch
+from data.utils import remove_comments_and_docstrings
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ def preprocess_code(code, lang):
     return code
 
 
-@hydra.main(config_path='configuration', config_name='defaults')
+@hydra.main(config_path='configuration', config_name='defaults', version_base='1.1')
 def main(cfg: omegaconf.DictConfig):
     if cfg.run.seed > 0:
         random.seed(cfg.run.seed)
@@ -33,6 +33,7 @@ def main(cfg: omegaconf.DictConfig):
 
     cfg.device = 'cuda' if torch.cuda.is_available() else 'cpu'
     cfg.parallel = torch.cuda.device_count() > 1
+    # hydra changes the current working dir, so we have to keep in memory the base path of the project
     cfg.run.base_path = hydra.utils.get_original_cwd()
 
     if cfg.use_wandb:
@@ -40,9 +41,9 @@ def main(cfg: omegaconf.DictConfig):
         wandb.init(**cfg.wandb.setup, config=wandb_cfg)
 
     dataset_files = {
-        'train': f'{cfg.run.dataset_dir}/{cfg.run.dataset_lang}/train.jsonl',
-        'valid': f'{cfg.run.dataset_dir}/{cfg.run.dataset_lang}/valid.jsonl',
-        'test': f'{cfg.run.dataset_dir}/{cfg.run.dataset_lang}/test.jsonl',
+        'train': os.path.join(cfg.run.base_path, cfg.run.dataset_dir, cfg.run.dataset_lang, f'train.jsonl'),
+        'valid': os.path.join(cfg.run.base_path, cfg.run.dataset_dir, cfg.run.dataset_lang, f'valid.jsonl'),
+        'test': os.path.join(cfg.run.base_path, cfg.run.dataset_dir, cfg.run.dataset_lang, f'test.jsonl'),
     }
 
     splits = []
@@ -54,13 +55,13 @@ def main(cfg: omegaconf.DictConfig):
     dataset = {}
     for split in splits:
         dataset[split] = load_dataset('json', data_files=dataset_files, split=split)
-        dataset[split] = dataset[split].map(lambda e: {'original_string': preprocess_code(e['original_string'], cfg.run.dataset_lang)}, num_proc=8)
+        dataset[split] = dataset[split].map(
+            lambda e: {'original_string': preprocess_code(e['original_string'], cfg.run.dataset_lang)}, num_proc=8)
         dataset[split] = dataset[split].filter(lambda e: e['original_string'] is not None, num_proc=8)
 
+    # @todo: load model checkpoint if specified
     model = AutoModel.from_pretrained(cfg.model.model_name_or_path)
     tokenizer = AutoTokenizer.from_pretrained(cfg.model.tokenizer_name_or_path)
-
-    # @todo: load model checkpoint if specified
 
     if cfg.parallel:
         model = torch.nn.DataParallel(model)

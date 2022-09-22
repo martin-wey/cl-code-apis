@@ -1,6 +1,6 @@
 ---
 task: codesearch
-dataset_dir: datasets/codesearchnet
+dataset_dir: data/csn
 dataset_lang: python
 
 train_batch_size: 64

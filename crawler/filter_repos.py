@@ -10,8 +10,8 @@ import json
 import pkg_resources
 from tqdm import tqdm
 
-SEARCH_LIB_NAME = sys.argv[1]   # first argument: library name
-SEARCH_LIB = sys.argv[2]        # second argument: library specifications (name, version)
+SEARCH_LIB_NAME = sys.argv[1]
+SEARCH_LIB_SPECS = sys.argv[2]
 LANGUAGE = 'python' if len(sys.argv) <= 3 else sys.argv[3]  # Default to Python, if none passed.
 
 
@@ -45,10 +45,19 @@ def main():
 
 def is_lib_in_repo_python(repo_libs):
     found = False
-    search_lib_dist = pkg_resources.get_distribution(SEARCH_LIB)
+    """
+    try:
+        search_lib_req = pkg_resources.Requirement.parse(SEARCH_LIB_SPECS)
+        search_lib_dist = pkg_resources.Distribution(project_name=search_lib_req)
+    except pkg_resources.DistributionNotFound:
+        raise ValueError(f'Library distribution not found: {SEARCH_LIB_NAME}\tv{SEARCH_LIB_VERSION}.')
+    """
+    search_lib_req = pkg_resources.Requirement.parse(SEARCH_LIB_SPECS)
     for lib in repo_libs:
         # https://setuptools.pypa.io/en/latest/pkg_resources.html#requirement-methods-and-attributes
-        if lib.__contains__(search_lib_dist):
+        lib_dist = pkg_resources.find_distributions(SEARCH_LIB_SPECS)
+        print(lib_dist)
+        if search_lib_req.__contains__(lib_dist.version):
             found = True
             break
     return found

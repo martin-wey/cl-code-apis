@@ -1,0 +1,1 @@
+This module might be useful later to mine specific repositories from GitHub.
