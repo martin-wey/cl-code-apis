@@ -11,6 +11,7 @@ from datasets import load_dataset
 from transformers import AutoModel, AutoTokenizer
 
 from data.utils import remove_comments_and_docstrings
+from tasks import codesearch
 
 logger = logging.getLogger(__name__)
 

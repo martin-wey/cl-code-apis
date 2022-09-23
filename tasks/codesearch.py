@@ -44,6 +44,7 @@ def test(cfg: omegaconf.DictConfig,
             truncation=True,
             return_tensors='np',
         ).input_ids
+
     logger.info('Tokenizing codes and docstrings.')
     test_dataset = test_dataset.map(
         lambda batch: {'code_tokenized': tokenize(batch['original_string'], cfg.run.max_code_length)},
@@ -60,7 +61,8 @@ def test(cfg: omegaconf.DictConfig,
     max_samples = 50
     full_batch_len = len(data) // cfg.run.test_batch_size * cfg.run.test_batch_size
     examples_sample = np.zeros(len(data), dtype=bool)
-    examples_sample[np.random.choice(np.arange(full_batch_len), replace=False, size=min(full_batch_len, max_samples))] = True
+    examples_sample[
+        np.random.choice(np.arange(full_batch_len), replace=False, size=min(full_batch_len, max_samples))] = True
     examples_table = []
 
     sum_mrr = 0.0
