@@ -57,10 +57,10 @@ def main(cfg: omegaconf.DictConfig):
     dataset = {}
     for split in splits:
         if cfg.run.load_data_from_disk:
-            logger.info(f'Loading preprocessed {split} dataset from disk.')
+            logger.info(f'Loading preprocessed {split} set from disk.')
             dataset[split] = load_from_disk(os.path.join(base_dataset_dir, f'{split}_preprocessed'))
         else:
-            logger.info(f'Preprocessing {split} dataset.')
+            logger.info(f'Preprocessing {split} set.')
             dataset[split] = load_dataset('json', data_files=dataset_files, split=split)
             dataset[split] = dataset[split].map(
                 lambda e: {'original_string': preprocess_code(e['original_string'], cfg.run.dataset_lang)}, num_proc=8)
@@ -81,10 +81,12 @@ def main(cfg: omegaconf.DictConfig):
     model.to(cfg.device)
 
     if cfg.run.do_train:
-        task_func = getattr(globals().get(cfg.run.task), 'test')
+        logger.info(f'***** Fine-tuning {cfg.model.config} model on {cfg.run.task} (lang: {cfg.run.dataset_lang}) *****')
+        task_func = getattr(globals().get(cfg.run.task), 'train')
         task_func(cfg, model, tokenizer, dataset['train'], dataset['valid'])
 
     if cfg.run.do_test:
+        logger.info(f'***** Testing {cfg.model.config} model on {cfg.run.task} (lang: {cfg.run.dataset_lang}) *****')
         task_func = getattr(globals().get(cfg.run.task), 'test')
         task_func(cfg, model, tokenizer, dataset['test'])
 
