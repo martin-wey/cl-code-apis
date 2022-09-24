@@ -24,7 +24,11 @@ def compute_ranks(src_representations: np.ndarray,
     return np.sum(distances <= correct_elements, axis=-1), distances
 
 
-def train():
+def train(cfg: omegaconf.DictConfig,
+          model: transformers.RobertaModel,
+          tokenizer: transformers.PreTrainedTokenizerFast,
+          train_dataset: datasets.Dataset,
+          valid_dataset: datasets.Dataset) -> None:
     pass
 
 
@@ -45,33 +49,25 @@ def test(cfg: omegaconf.DictConfig,
             return_tensors='np',
         ).input_ids
 
-    logger.info('Tokenizing codes and docstrings.')
+    logger.info('Tokenizing codes and queries.')
     test_dataset = test_dataset.map(
-        lambda batch: {'code_tokenized': tokenize(batch['original_string'], cfg.run.max_code_length)},
-        batched=True, num_proc=4)
+        lambda batch: {'code_tokenized': tokenize(batch['original_string'], cfg.run.max_code_length)}, batched=True,
+        num_proc=4)
     test_dataset = test_dataset.map(
-        lambda batch: {'docstring_tokenized': tokenize(batch['docstring'], cfg.run.max_query_length)},
-        batched=True, num_proc=4)
+        lambda batch: {'docstring_tokenized': tokenize(batch['docstring'], cfg.run.max_query_length)}, batched=True,
+        num_proc=4)
     test_dataset = test_dataset.remove_columns(
         [col for col in test_dataset.column_names if col not in ['code_tokenized', 'docstring_tokenized']])
     test_dataset = test_dataset.shuffle(seed=cfg.run.seed)
 
+    # Because we have huge batch size at test (e.g., 1000), we transform tensors into np arrays
+    #   otherwise it wouldn't fit in memory
     data = np.array(list(zip(test_dataset['code_tokenized'], test_dataset['docstring_tokenized'])), dtype=np.object)
-
-    max_samples = 50
-    full_batch_len = len(data) // cfg.run.test_batch_size * cfg.run.test_batch_size
-    examples_sample = np.zeros(len(data), dtype=bool)
-    examples_sample[
-        np.random.choice(np.arange(full_batch_len), replace=False, size=min(full_batch_len, max_samples))] = True
-    examples_table = []
 
     sum_mrr = 0.0
     num_batches = 0
     batched_data = chunked(data, cfg.run.test_batch_size)
-    batched_sample = chunked(examples_sample, cfg.run.test_batch_size)
-    for batch_idx, (batch_data, batch_sample) in enumerate(tqdm(zip(batched_data, batched_sample),
-                                                                bar_format='{desc:<10}{percentage:3.0f}%|{bar:100}{r_bar}',
-                                                                desc='Iteration')):
+    for batch_data in tqdm(batched_data, desc='Iteration', total=len(data) // cfg.run.test_batch_size):
         if len(batch_data) < cfg.run.test_batch_size:
             break  # the last batch is smaller than the others, exclude.
         num_batches += 1
@@ -100,4 +96,4 @@ def test(cfg: omegaconf.DictConfig,
         sum_mrr += np.mean(1.0 / ranks)
 
     mrr = sum_mrr / num_batches
-    print(mrr)
+    logger.info(f'Test MRR: {round(mrr, 4)}')

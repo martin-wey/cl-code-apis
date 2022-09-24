@@ -2,6 +2,7 @@
 task: codesearch
 dataset_dir: data/csn
 dataset_lang: python
+load_data_from_disk: False
 
 train_batch_size: 64
 valid_batch_size: 64
