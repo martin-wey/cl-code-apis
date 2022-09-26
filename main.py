@@ -8,12 +8,17 @@ import omegaconf
 import torch
 import wandb
 from datasets import load_dataset, load_from_disk
-from transformers import AutoModel, AutoTokenizer
+from transformers import AutoModel, AutoTokenizer, T5EncoderModel
 
 from data.utils import remove_comments_and_docstrings
 from tasks import codesearch
 
 logger = logging.getLogger(__name__)
+
+MODEL_CLASSES = {
+    'codebert_codesearch': (AutoModel, AutoTokenizer),
+    'codet5_codesearch': (T5EncoderModel, AutoTokenizer)
+}
 
 
 def preprocess_code(code, lang):
@@ -68,25 +73,26 @@ def main(cfg: omegaconf.DictConfig):
             logger.info(f'Saving {split} dataset to disk.')
             dataset[split].save_to_disk(os.path.join(base_dataset_dir, f'{split}_preprocessed'))
 
-    if cfg.model.checkpoint is not None:
+    model_cls = MODEL_CLASSES[f'{cfg.model.model_name}_{cfg.run.task}']
+    if cfg.model.checkpoint_dir is not None:
         logger.info('Loading model from local checkpoint.')
-        model = AutoModel.from_pretrained(os.path.join(cfg.run.base_path, cfg.model.model_name_or_path))
+        model = model_cls[0].from_pretrained(os.path.join(cfg.run.base_path, cfg.model.checkpoint_dir))
     else:
         logger.info('Loading model from HuggingFace hub.')
-        model = AutoModel.from_pretrained(cfg.model.hf_model_name)
-    tokenizer = AutoTokenizer.from_pretrained(cfg.model.hf_tokenizer_name)
+        model = model_cls[0].from_pretrained(cfg.model.hf_model_name)
+    tokenizer = model_cls[1].from_pretrained(cfg.model.hf_tokenizer_name)
 
     if cfg.parallel:
         model = torch.nn.DataParallel(model)
     model.to(cfg.device)
 
     if cfg.run.do_train:
-        logger.info(f'***** Fine-tuning {cfg.model.config} model on {cfg.run.task} (lang: {cfg.run.dataset_lang}) *****')
+        logger.info(f'***** Fine-tuning {cfg.model.model_name} model on {cfg.run.task} (lang: {cfg.run.dataset_lang}) *****')
         task_func = getattr(globals().get(cfg.run.task), 'train')
         task_func(cfg, model, tokenizer, dataset['train'], dataset['valid'])
 
     if cfg.run.do_test:
-        logger.info(f'***** Testing {cfg.model.config} model on {cfg.run.task} (lang: {cfg.run.dataset_lang}) *****')
+        logger.info(f'***** Testing {cfg.model.model_name} model on {cfg.run.task} (lang: {cfg.run.dataset_lang}) *****')
         task_func = getattr(globals().get(cfg.run.task), 'test')
         task_func(cfg, model, tokenizer, dataset['test'])
 

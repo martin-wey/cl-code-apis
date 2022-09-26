@@ -2,7 +2,7 @@
 defaults:
   - _self_
   - run: codesearch
-  - model: codebert_encoder
+  - model: codebert
   - wandb: default
   - hydra: default
 
@@ -10,6 +10,8 @@ run:
   run_name: test
   base_path: null   # leave it to null
   seed: 42
+  do_train: False
+  do_test: False
 
 device: cuda
 parallel: False

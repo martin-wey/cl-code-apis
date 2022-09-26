@@ -122,8 +122,7 @@ def train(cfg: omegaconf.DictConfig,
             if eval_loss < best_eval_loss:
                 logger.info('Saving new best model checkpoint.')
                 model_to_save = model.module if hasattr(model, 'module') else model
-                output_path = os.path.join(f'pytorch_model.bin')
-                torch.save(model_to_save.state_dict(), output_path)
+                model_to_save.save_pretrained('saved_model')
                 patience_count = 0
                 best_eval_loss = eval_loss
             else:
@@ -183,7 +182,7 @@ def test(cfg: omegaconf.DictConfig,
 
     # Because we have huge batch size at test (e.g., 1000), we transform tensors into np arrays
     #   otherwise it wouldn't fit in memory
-    data = np.array(list(zip(test_dataset['code_tokenized'], test_dataset['docstring_tokenized'])), dtype=np.object)
+    data = np.array(list(zip(test_dataset['code_tokenized'], test_dataset['docstring_tokenized'])), dtype=np.int)
 
     sum_mrr = 0.0
     num_batches = 0

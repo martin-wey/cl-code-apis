@@ -1,0 +1,7 @@
+---
+model_name: codet5
+
+hf_model_name: Salesforce/codet5-base
+hf_tokenizer_name: Salesforce/codet5-base
+
+checkpoint_dir: null

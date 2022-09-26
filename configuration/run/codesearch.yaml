@@ -1,5 +1,6 @@
 ---
 task: codesearch
+
 dataset_dir: data/csn
 dataset_lang: python
 load_data_from_disk: False
@@ -14,6 +15,3 @@ max_query_length: 128
 learning_rate: 5e-5
 epochs: 5
 patience: 2
-
-do_train: False
-do_test: False
