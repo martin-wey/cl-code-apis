@@ -77,7 +77,7 @@ def train(cfg: omegaconf.DictConfig,
     criterion = torch.nn.CrossEntropyLoss()
     model.train()
 
-    best_eval_loss = 0.0
+    best_eval_loss = float('inf')
     patience_count = 0
     with logging_redirect_tqdm():
         for epoch in range(1, cfg.run.epochs + 1):
@@ -95,11 +95,11 @@ def train(cfg: omegaconf.DictConfig,
                 training_loss += loss.item()
                 step_loss += loss.item()
                 step_num += 1
-                if step % 20 == 0 and step > 0:
+                if step % 200 == 0 and step > 0:
                     avg_loss = round(step_loss / step_num, 4)
                     logger.info(f'epoch #{epoch} | step {step} | loss {round(avg_loss, 3)}')
                     if cfg.use_wandb:
-                        wandb.log({'train_loss': avg_loss, 'epoch': epoch, 'batch': epoch * step})
+                        wandb.log({'train_loss': avg_loss, 'epoch': epoch, 'step': epoch * step})
                     step_loss, step_num = 0, 0
 
                 # backpropagation
@@ -119,7 +119,7 @@ def train(cfg: omegaconf.DictConfig,
             if cfg.use_wandb:
                 wandb.log({'eval_loss': eval_loss, 'eval_mrr': eval_mrr, 'epoch': epoch})
 
-            if eval_loss > best_eval_loss:
+            if eval_loss < best_eval_loss:
                 logger.info('Saving new best model checkpoint.')
                 model_to_save = model.module if hasattr(model, 'module') else model
                 output_path = os.path.join(f'pytorch_model.bin')

@@ -7,6 +7,7 @@ defaults:
   - hydra: default
 
 run:
+  run_name: test
   base_path: null   # leave it to null
   seed: 42
 
