@@ -101,7 +101,7 @@ def send_query(query):
     while not success and attempts < 3:
         request = requests.post('https://api.github.com/graphql', json={'query': query}, headers=headers)
         content = request.json()
-        if 'data' not in content or 'search' not in content['data']:
+        if 'data_old' not in content or 'search' not in content['data_old']:
             # If this is simply a signal to pause querying, wait two minutes.
             if 'message' in content and 'wait' in content['message']:
                 attempts += 1
@@ -115,7 +115,7 @@ def send_query(query):
 
 
 def get_end_cursor(content):
-    page_info = content['data']['search']['pageInfo']
+    page_info = content['data_old']['search']['pageInfo']
     has_next_page = page_info['hasNextPage']
     if has_next_page:
         return page_info['endCursor']
@@ -123,7 +123,7 @@ def get_end_cursor(content):
 
 
 def get_repositories(content):
-    edges = content['data']['search']['edges']
+    edges = content['data_old']['search']['edges']
     repositories_with_stars = []
     for edge in edges:
         if edge['node']['isPrivate'] is False and edge['node']['isDisabled'] is False \

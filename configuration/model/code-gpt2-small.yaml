@@ -1,0 +1,6 @@
+---
+model_name: codebert
+model_config_path: ./configuration/model/code-gpt2-small_config.json
+
+model_name_or_path: null
+tokenizer_name_or_path: codeparrot/codeparrot

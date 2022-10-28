@@ -1,7 +1,0 @@
----
-model_name: codebert
-
-hf_model_name: microsoft/codebert-base
-hf_tokenizer_name: microsoft/codebert-base
-
-checkpoint_dir: null

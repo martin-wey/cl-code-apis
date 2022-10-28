@@ -1,12 +1,6 @@
-import gzip
 import re
 import tokenize
-import zipfile
 from io import StringIO
-from typing import Optional
-
-import requests
-from tqdm import tqdm
 
 
 def remove_comments_and_docstrings(source, lang):
@@ -67,19 +61,3 @@ def remove_comments_and_docstrings(source, lang):
             if x.strip() != "":
                 temp.append(x)
         return '\n'.join(temp)
-
-
-def download_url(url: str, save_path: str, chunk_size: int = 128):
-    r = requests.get(url, stream=True)
-    with open(save_path, 'wb') as f:
-        for chunk in tqdm(r.iter_content(chunk_size=chunk_size)):
-            f.write(chunk)
-
-
-def unzip_file(file_path: str, output_dir: str, output_path: Optional[str] = None):
-    if 'gz' in file_path:
-        with gzip.open(file_path, 'rb') as f1, open(output_path, 'w') as f2:
-            f2.write(f1.read().decode('utf-8'))
-    else:
-        with zipfile.ZipFile(file_path, 'r') as f:
-            f.extractall(output_dir)

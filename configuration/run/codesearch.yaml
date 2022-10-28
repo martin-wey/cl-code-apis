@@ -1,7 +1,7 @@
 ---
 task: codesearch
 
-dataset_dir: data/csn
+dataset_dir: data_old/csn
 dataset_lang: python
 load_data_from_disk: False
 

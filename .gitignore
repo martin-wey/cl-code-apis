@@ -127,9 +127,7 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
-
 .idea/
-/data/csn/
-/data/dataset/
-/data/dataset.zip
-/outputs/
+outputs/
+clustering/
+data/

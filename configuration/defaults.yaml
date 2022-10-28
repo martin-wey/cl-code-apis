@@ -1,18 +1,17 @@
 ---
 defaults:
   - _self_
-  - run: codesearch
-  - model: codebert
+  - run: clm_pretraining
+  - model: code-gpt2-small
   - wandb: default
-  - hydra: default
+  - hydra: no_output
 
 run:
-  run_name: test
-  base_path: null   # leave it to null
+  run_name: run_clm_pretraining
+  # leave base_path to null
+  base_path: null
   seed: 42
-  do_train: False
-  do_test: False
 
 device: cuda
 parallel: False
-use_wandb: True
+use_wandb: False
