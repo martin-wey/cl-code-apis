@@ -56,7 +56,7 @@ def filter(example, uniques, args):
 def compress_file(file_path):
     """Compress a file with g-zip."""
     with open(file_path, "rb") as f_in:
-        with gzip.open(str(file_path) + ".gz", "wb", compresslevel=6) as f_out:
+        with gzip.open(str(file_path) + '.gz', 'wb', compresslevel=6) as f_out:
             shutil.copyfileobj(f_in, f_out)
     os.unlink(file_path)
 
@@ -80,7 +80,7 @@ def main():
     if args.seed > 0:
         set_seed(args.seed)
 
-    ds = load_dataset(args.dataset_dir, data_files={'train': 'data_small.csv'}, split='train')
+    ds = load_dataset(args.dataset_dir, data_files={'train': 'data.csv'}, split='train')
     ds = ds.map(preprocess, num_proc=args.num_proc)
 
     uniques = set(ds.unique('hash'))
@@ -94,7 +94,7 @@ def main():
     output_dir.mkdir(exist_ok=True)
 
     for file_number, index in enumerate(range(0, len(ds_filter), args.samples_per_file)):
-        file_path = str(output_dir / f"file-{file_number + 1:03}.json")
+        file_path = str(output_dir / f'file-{file_number + 1:03}.json')
         end_index = min(len(ds_filter), index + args.samples_per_file)
         ds_filter.select(list(range(index, end_index))).to_json(file_path)
         compress_file(file_path)

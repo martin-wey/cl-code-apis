@@ -4,7 +4,6 @@ from itertools import chain
 import datasets
 import hydra
 import omegaconf
-import torch.cuda
 import transformers
 from accelerate import Accelerator
 from accelerate.logging import get_logger
