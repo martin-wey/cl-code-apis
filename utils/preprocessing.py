@@ -65,12 +65,14 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset_dir', default='./data', type=str,
                         help='Directory where the csv raw data file is stored.')
-    parser.add_argument('--output_dir', default='./data_preprocessed', type=str,
+    parser.add_argument('--output_dir', default='./data/preprocessed', type=str,
                         help='Output directory.')
     parser.add_argument('--samples_per_file', default=100000, type=int,
                         help='Number of samples to store per preprocessed data file.')
     parser.add_argument('--line_max', default=250, type=int,
                         help='Maximum line length in the method, otherwise it is filtered.')
+    parser.add_argument('--num_proc', default=8, type=int,
+                        help='Number of process to use.')
     parser.add_argument('--seed', default=42, type=int,
                         help='Seed for replication.')
     args = parser.parse_args()
@@ -79,7 +81,7 @@ def main():
         set_seed(args.seed)
 
     ds = load_dataset(args.dataset_dir, data_files={'train': 'data_small.csv'}, split='train')
-    ds = ds.map(preprocess, num_proc=8)
+    ds = ds.map(preprocess, num_proc=args.num_proc)
 
     uniques = set(ds.unique('hash'))
     frac = len(uniques) / len(ds)

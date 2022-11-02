@@ -7,9 +7,10 @@ defaults:
   - hydra: no_output
 
 run:
-  run_name: run_clm_pretraining
+  run_name: clm_pretraining
   # leave base_path to null
   base_path: null
+  num_proc: 4
   seed: 42
 
 device: cuda

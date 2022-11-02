@@ -16,6 +16,28 @@ from transformers import get_scheduler, default_data_collator
 logger = get_logger(__name__)
 
 
+def evaluate(cfg: omegaconf.DictConfig,
+             accelerator: accelerate.Accelerator,
+             model: transformers.AutoModelForCausalLM,
+             eval_dataloader: DataLoader,
+             eval_dataset: datasets.Dataset) -> (float, float):
+    model.eval()
+    losses = []
+    for step, batch in enumerate(tqdm(eval_dataloader, desc='Validation', disable=not accelerator.is_local_main_process)):
+        with torch.no_grad():
+            outputs = model(**batch)
+        loss = outputs.loss
+        losses.append(accelerator.gather(loss.repeat(int(cfg.run.train_batch_size / accelerator.num_processes))))
+    losses = torch.cat(losses)
+    losses = losses[:len(eval_dataset)]
+    try:
+        eval_loss = torch.mean(losses)
+        perplexity = math.exp(eval_loss)
+    except OverflowError:
+        perplexity = float('inf')
+    return perplexity, eval_loss
+
+
 def train(cfg: omegaconf.DictConfig,
           accelerator: accelerate.Accelerator,
           model: transformers.AutoModelForCausalLM,
@@ -24,7 +46,7 @@ def train(cfg: omegaconf.DictConfig,
     train_dataloader = DataLoader(
         train_dataset, shuffle=True, collate_fn=default_data_collator, batch_size=cfg.run.train_batch_size
     )
-    valid_dataloader = DataLoader(
+    eval_dataloader = DataLoader(
         valid_dataset, collate_fn=default_data_collator, batch_size=cfg.run.valid_batch_size
     )
 
@@ -52,7 +74,7 @@ def train(cfg: omegaconf.DictConfig,
 
     # Prepare everything with our `accelerator`.
     model, optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.prepare(
-        model, optimizer, train_dataloader, valid_dataloader, lr_scheduler
+        model, optimizer, train_dataloader, eval_dataloader, lr_scheduler
     )
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
@@ -70,7 +92,7 @@ def train(cfg: omegaconf.DictConfig,
     logger.info(f"  Gradient Accumulation steps = {cfg.run.gradient_accumulation_steps}")
     logger.info(f"  Total optimization steps = {cfg.run.max_train_steps}")
 
-    progress_bar = tqdm(range(cfg.run.max_train_steps), disable=not accelerator.is_local_main_process)
+    progress_bar = tqdm(range(cfg.run.max_train_steps), disable=not accelerator.is_local_main_process, desc='Training')
     completed_steps = 0
     starting_epoch = 0
 
@@ -93,28 +115,18 @@ def train(cfg: omegaconf.DictConfig,
                 progress_bar.update(1)
                 completed_steps += 1
 
+            if completed_steps % cfg.run.logging_steps == 0 and cfg.use_wandb:
+                accelerator.log({'train/loss': loss}, step=completed_steps)
+
             if completed_steps % cfg.run.save_checkpoint_steps == 0:
-                output_dir = f"step_{completed_steps}"
-                accelerator.save_state(output_dir)
+                logger.info('Running validation and saving model checkpoint.')
+                perplexity, eval_loss = evaluate(cfg, accelerator, model, eval_dataloader, valid_dataset)
+                accelerator.log({'eval/loss': eval_loss, 'eval/perplexity': perplexity}, step=completed_steps)
+                accelerator.wait_for_everyone()
+                output_dir = f'step_{completed_steps}'
+                unwrapped_model = accelerator.unwrap_model(model)
+                unwrapped_model.save_pretrained(output_dir, save_function=accelerator.save)
+                model.train()
 
             if completed_steps >= cfg.run.max_train_steps:
                 break
-
-        model.eval()
-        losses = []
-        for step, batch in enumerate(valid_dataloader):
-            with torch.no_grad():
-                outputs = model(**batch)
-
-            loss = outputs.loss
-            losses.append(
-                accelerator.gather_for_metrics(loss.repeat(cfg.run.train_batch_size / accelerator.num_processes)))
-
-        losses = torch.cat(losses)
-        try:
-            eval_loss = torch.mean(losses)
-            perplexity = math.exp(eval_loss)
-        except OverflowError:
-            perplexity = float("inf")
-
-        logger.info(f"epoch {epoch}: perplexity: {perplexity} eval_loss: {eval_loss}")

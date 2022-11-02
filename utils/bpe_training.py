@@ -17,9 +17,9 @@ def batch_iterator(iter_dataset, args, batch_size=10):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset_dir', default='./data_preprocessed', type=str,
+    parser.add_argument('--dataset_dir', default='./data/preprocessed', type=str,
                         help='Directory where the csv raw data file is stored.')
-    parser.add_argument('--output_dir', default='./bpe_tokenizer', type=str,
+    parser.add_argument('--output_dir', default='./data/bpe_tokenizer', type=str,
                         help='Output directory.')
     parser.add_argument('--tokenizer_type', default='gpt2', type=str,
                         help='Type of the tokenizer to train.')

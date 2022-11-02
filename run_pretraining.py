@@ -4,6 +4,7 @@ from itertools import chain
 import datasets
 import hydra
 import omegaconf
+import torch.cuda
 import transformers
 from accelerate import Accelerator
 from accelerate.logging import get_logger
@@ -35,6 +36,10 @@ def main(cfg: omegaconf.DictConfig):
 
     accelerator = Accelerator(gradient_accumulation_steps=cfg.run.gradient_accumulation_steps, **accelerator_log_kwargs)
     logger.info(accelerator.state, main_process_only=False)
+
+    if cfg.use_wandb:
+        accelerator.init_trackers(project_name='cl-code')
+
     if accelerator.is_local_main_process:
         datasets.utils.logging.set_verbosity_warning()
         transformers.utils.logging.set_verbosity_info()
@@ -83,11 +88,9 @@ def main(cfg: omegaconf.DictConfig):
         if 'validation' not in raw_datasets.keys():
             raw_datasets['validation'] = load_dataset(dataset_dir, split=f'train[:5%]')
             raw_datasets['train'] = load_dataset(dataset_dir, split=f'train[5%:]')
-            raw_datasets['train'] = raw_datasets['train'].select(list(range(1000)))
-            raw_datasets['validation'] = raw_datasets['validation'].select(list(range(1000)))
         for ds_key in ['train', 'validation']:
             raw_datasets[ds_key] = raw_datasets[ds_key].remove_columns(
-                [cname for cname in raw_datasets[ds_key].column_names if cname != 'content'])
+                [cname for cname in raw_datasets[ds_key].column_names if cname != 'source_code'])
     else:
         raise ValueError(
             "You must either specify a dataset name using `run.dataset_name` config key "
@@ -95,15 +98,15 @@ def main(cfg: omegaconf.DictConfig):
         )
 
     def tokenize_function(examples):
-        return tokenizer(examples['content'])
+        return tokenizer(examples['source_code'])
 
     with accelerator.main_process_first():
         tokenized_datasets = raw_datasets.map(
             tokenize_function,
             batched=True,
-            num_proc=4,
+            num_proc=cfg.run.num_proc,
             load_from_cache_file=True,
-            remove_columns=['content'],
+            remove_columns=['source_code'],
             desc="Running tokenizer on dataset",
         )
 
@@ -129,7 +132,7 @@ def main(cfg: omegaconf.DictConfig):
         lm_datasets = tokenized_datasets.map(
             group_texts,
             batched=True,
-            num_proc=4,
+            num_proc=cfg.run.num_proc,
             load_from_cache_file=True,
             desc=f"Grouping texts in chunks of {block_size}",
         )

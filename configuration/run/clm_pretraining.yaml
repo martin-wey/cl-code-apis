@@ -1,12 +1,13 @@
 ---
 task: clm
 
+# dataset name for loading from HF hub
 dataset_name: null
-# local test
-dataset_dir: data/test_data   # @todo: update dataset directory
+# if dataset stored locally
+dataset_dir: data/preprocessed
 
-train_batch_size: 12
-valid_batch_size: 12
+train_batch_size: 8
+valid_batch_size: 8
 weight_decay: 0.2
 shuffle_buffer: 1_000
 learning_rate: 5e-4
@@ -18,4 +19,5 @@ num_train_epochs: 10
 max_train_steps: 150_000
 max_eval_steps: -1
 seq_length: 1024
-save_checkpoint_steps: 15_000
+save_checkpoint_steps: 1000 # 15,000
+logging_steps: 100
