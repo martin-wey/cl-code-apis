@@ -4,13 +4,13 @@ defaults:
   - run: clm_pretraining
   - model: code-gpt2-small
   - wandb: default
-  - hydra: no_output
+  - hydra: default
 
 run:
   run_name: clm_pretraining
   # leave base_path to null
   base_path: null
-  num_proc: 4
+  preprocessing_num_workers: 4
   seed: 42
 
 device: cuda

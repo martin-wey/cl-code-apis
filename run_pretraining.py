@@ -19,6 +19,7 @@ from transformers import (
 from tasks import clm_pretraining
 
 logger = get_logger(__name__)
+MAX_GPU_BATCH_SIZE = 12
 
 
 @hydra.main(config_path='configuration', config_name='defaults', version_base='1.1')
@@ -33,7 +34,14 @@ def main(cfg: omegaconf.DictConfig):
         accelerator_log_kwargs['log_with'] = 'wandb'
         accelerator_log_kwargs['logging_dir'] = os.getcwd()
 
-    accelerator = Accelerator(gradient_accumulation_steps=cfg.run.gradient_accumulation_steps, **accelerator_log_kwargs)
+    # if per_device_train_batch_size is too large, we accumulate gradients
+    if cfg.run.per_device_train_batch_size > MAX_GPU_BATCH_SIZE:
+        cfg.run.gradient_accumulation_steps = cfg.run.per_device_train_batch_size // MAX_GPU_BATCH_SIZE
+        cfg.run.per_device_train_batch_size = MAX_GPU_BATCH_SIZE
+
+    accelerator = Accelerator(gradient_accumulation_steps=cfg.run.gradient_accumulation_steps,
+                              mixed_precision=cfg.run.mixed_precision,
+                              **accelerator_log_kwargs)
     logger.info(accelerator.state, main_process_only=False)
 
     if cfg.use_wandb:
@@ -61,7 +69,8 @@ def main(cfg: omegaconf.DictConfig):
                 "You need to train a tokenizer and provide its name or path"
                 "before initiating a new model pretraining."
             )
-        tokenizer = AutoTokenizer.from_pretrained(cfg.model.tokenizer_name_or_path)
+        tokenizer_path = os.path.join(cfg.run.base_path, cfg.model.tokenizer_name_or_path)
+        tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, use_fast=True)
         if cfg.run.task == 'clm':
             model = AutoModelForCausalLM.from_config(config)
         elif cfg.run.task == 'mlm':
@@ -70,19 +79,23 @@ def main(cfg: omegaconf.DictConfig):
             raise ValueError(
                 "This scripts only support CLM and MLM pretraining."
             )
+        model_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        logger.info(f"Training a new model from scratch (# parameters: {model_params})")
     else:
         # loading model from checkpoint or HF hub
-        pass
+        logger.info(f"Loading pre-trained model from checkpoint ({cfg.model.model_name_or_path}).")
+        if cfg.run.task == 'clm':
+            model = AutoModelForCausalLM.from_pretrained(cfg.model.model_name_or_path)
+        elif cfg.run.task == 'mlm':
+            model = AutoModelForMaskedLM.from_pretrained(cfg.model.model_name_or_path)
 
     model.resize_token_embeddings(len(tokenizer))
-    model_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    logger.info(f"Training a new model from scratch (# parameters: {model_params})")
 
     if cfg.run.dataset_name is not None:
         # use streaming for large datasets
         raw_datasets = load_dataset(cfg.run.dataset_name, streaming=True)
     elif cfg.run.dataset_dir is not None:
-        dataset_dir = os.path.join(os.getcwd(), cfg.run.dataset_dir)
+        dataset_dir = os.path.join(cfg.run.base_path, cfg.run.dataset_dir)
         raw_datasets = load_dataset(dataset_dir)
         if 'validation' not in raw_datasets.keys():
             raw_datasets['validation'] = load_dataset(dataset_dir, split=f'train[:5%]')
@@ -103,7 +116,7 @@ def main(cfg: omegaconf.DictConfig):
         tokenized_datasets = raw_datasets.map(
             tokenize_function,
             batched=True,
-            num_proc=cfg.run.num_proc,
+            num_proc=cfg.run.preprocessing_num_workers,
             load_from_cache_file=True,
             remove_columns=['source_code'],
             desc="Running tokenizer on dataset",
@@ -131,7 +144,7 @@ def main(cfg: omegaconf.DictConfig):
         lm_datasets = tokenized_datasets.map(
             group_texts,
             batched=True,
-            num_proc=cfg.run.num_proc,
+            num_proc=cfg.run.preprocessing_num_workers,
             load_from_cache_file=True,
             desc=f"Grouping texts in chunks of {block_size}",
         )

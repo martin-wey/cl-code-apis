@@ -2,13 +2,7 @@
 Splitting preprocessed data into in-distribution and out-of-distribution datasets.
 
 OOD data: samples using at least one of the target APIs -> fine-tuning.
-ID data: rest of the samples -> pre-training
-
-1. Load dataset from preprocessed folder.
-2. Go through the samples, add field containing the list of APIs used, store sample ids of those using the target APIs.
-3. Filter out samples using the stored id -> OOD data.
-4. Rest of the samples -> ID data.
-5. Export datasets in sub-folders /id and /ood
+ID data: rest of the samples -> pre-training & fine-tuning.
 """
 import argparse
 import gzip
@@ -61,15 +55,27 @@ def main():
     if args.seed > 0:
         set_seed(args.seed)
 
+    # filter dataset into ID and OOD datasets.
     ds = load_dataset(args.dataset_dir, split='train')
     ds = ds.map(filter_contains_api, num_proc=args.num_proc)
     ds_id = ds.filter(lambda example: not example['ood'], num_proc=args.num_proc)
     ds_ood = ds.filter(lambda example: example['ood'], num_proc=args.num_proc)
 
+    # ID dataset is used both for pre-training and fine-tuning
+    #   we need to get ds_id_pretraining and ds_id_finetuning.
+    ds_id.shuffle(seed=args.seed)
+    ds_id_splitted = ds_id.train_test_split(test_size=.1)   # we might need to change the fine-tuning dataset size
+    ds_id_pretraining = ds_id_splitted['train']
+    ds_id_finetuning = ds_id_splitted['test']
+
+    print(f'# ID pretraining samples: {len(ds_id_pretraining)}')
+    print(f'# ID finetuning samples: {len(ds_id_finetuning)}')
+    print(f'# OOD finetuning samples: {len(ds_ood)}')
+
     # Save data in batches of samples_per_file
     output_dir = Path(args.dataset_dir)
 
-    for (ds, f) in ((ds_id, 'in'), (ds_ood, 'ood')):
+    for (ds, f) in ((ds_id_pretraining, 'in/pre-training'), (ds_id_finetuning, 'in/fine-tuning'), (ds_ood, 'ood')):
         for file_number, index in enumerate(range(0, len(ds), args.samples_per_file)):
             file_path = str(output_dir / f / f'file-{file_number + 1:03}.json')
             end_index = min(len(ds), index + args.samples_per_file)

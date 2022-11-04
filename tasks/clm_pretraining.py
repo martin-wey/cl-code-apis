@@ -2,6 +2,7 @@
 Pretraining a GPT-like model for causal language modeling.
 """
 import math
+import os
 
 import accelerate
 import datasets
@@ -23,11 +24,12 @@ def evaluate(cfg: omegaconf.DictConfig,
              eval_dataset: datasets.Dataset) -> (float, float):
     model.eval()
     losses = []
-    for step, batch in enumerate(tqdm(eval_dataloader, desc='Validation', disable=not accelerator.is_local_main_process)):
+    for step, batch in enumerate(
+            tqdm(eval_dataloader, desc='Validation', disable=not accelerator.is_local_main_process)):
         with torch.no_grad():
             outputs = model(**batch)
         loss = outputs.loss
-        losses.append(accelerator.gather(loss.repeat(int(cfg.run.train_batch_size / accelerator.num_processes))))
+        losses.append(accelerator.gather(loss.repeat(cfg.run.per_device_eval_batch_size)))
     losses = torch.cat(losses)
     losses = losses[:len(eval_dataset)]
     try:
@@ -44,10 +46,10 @@ def train(cfg: omegaconf.DictConfig,
           train_dataset: datasets.Dataset,
           valid_dataset: datasets.Dataset) -> None:
     train_dataloader = DataLoader(
-        train_dataset, shuffle=True, collate_fn=default_data_collator, batch_size=cfg.run.train_batch_size
+        train_dataset, shuffle=True, collate_fn=default_data_collator, batch_size=cfg.run.per_device_train_batch_size
     )
     eval_dataloader = DataLoader(
-        valid_dataset, collate_fn=default_data_collator, batch_size=cfg.run.valid_batch_size
+        valid_dataset, collate_fn=default_data_collator, batch_size=cfg.run.per_device_eval_batch_size
     )
 
     # Optimizer
@@ -82,12 +84,12 @@ def train(cfg: omegaconf.DictConfig,
     # Afterwards we recalculate our number of training epochs
     cfg.run.num_train_epochs = math.ceil(cfg.run.max_train_steps / num_update_steps_per_epoch)
 
-    total_batch_size = cfg.run.train_batch_size * cfg.run.gradient_accumulation_steps
+    total_batch_size = cfg.run.per_device_train_batch_size * accelerator.num_processes * cfg.run.gradient_accumulation_steps
 
     logger.info("***** Running training *****")
     logger.info(f"  Num examples = {len(train_dataset)}")
     logger.info(f"  Num Epochs = {cfg.run.num_train_epochs}")
-    logger.info(f"  Instantaneous batch size per device = {cfg.run.train_batch_size / accelerator.num_processes}")
+    logger.info(f"  Instantaneous batch size per device = {cfg.run.per_device_train_batch_size}")
     logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
     logger.info(f"  Gradient Accumulation steps = {cfg.run.gradient_accumulation_steps}")
     logger.info(f"  Total optimization steps = {cfg.run.max_train_steps}")
@@ -95,6 +97,15 @@ def train(cfg: omegaconf.DictConfig,
     progress_bar = tqdm(range(cfg.run.max_train_steps), disable=not accelerator.is_local_main_process, desc='Training')
     completed_steps = 0
     starting_epoch = 0
+
+    if cfg.run.resume_from_checkpoint:
+        resume_path = os.path.join(cfg.run.base_path, cfg.run.resume_from_checkpoint)
+        accelerator.print(f"Resumed from checkpoint: {resume_path}")
+        accelerator.load_state(resume_path)
+        path = os.path.basename(resume_path)
+        training_difference = os.path.splitext(path)[0]
+        resume_step = int(training_difference.replace('step_', ''))
+        starting_epoch = resume_step // len(train_dataloader)
 
     for epoch in range(starting_epoch, cfg.run.num_train_epochs):
         model.train()
@@ -119,14 +130,32 @@ def train(cfg: omegaconf.DictConfig,
                 accelerator.log({'train/loss': loss}, step=completed_steps)
 
             if completed_steps % cfg.run.save_checkpoint_steps == 0:
-                logger.info('Running validation and saving model checkpoint.')
+                logger.info("Running validation and saving model checkpoint.")
                 perplexity, eval_loss = evaluate(cfg, accelerator, model, eval_dataloader, valid_dataset)
                 accelerator.log({'eval/loss': eval_loss, 'eval/perplexity': perplexity}, step=completed_steps)
                 accelerator.wait_for_everyone()
-                output_dir = f'step_{completed_steps}'
-                unwrapped_model = accelerator.unwrap_model(model)
-                unwrapped_model.save_pretrained(output_dir, save_function=accelerator.save)
+                accelerator.save_state(output_dir=f'step_{completed_steps}')
                 model.train()
-
             if completed_steps >= cfg.run.max_train_steps:
                 break
+
+        logger.info(f"Evaluate model and saving after epoch #{epoch}.")
+        perplexity, eval_loss = evaluate(cfg, accelerator, model, eval_dataloader, valid_dataset)
+
+        accelerator.log(
+            {
+                'eval/loss': eval_loss,
+                'eval/perplexity': perplexity,
+                'step': completed_steps,
+                'epoch': epoch
+            }, step=completed_steps
+        )
+
+        accelerator.wait_for_everyone()
+        unwrapped_model = accelerator.unwrap_model(model)
+        unwrapped_model.save_pretrained('model', save_function=accelerator.save)
+        accelerator.save_state(output_dir=f'step_{completed_steps}')
+
+    logger.info('Evaluating model after training completed.')
+    perplexity, eval_loss = evaluate(cfg, accelerator, model, eval_dataloader, valid_dataset)
+    accelerator.log({'eval/loss': eval_loss, 'eval/perplexity': perplexity}, step=completed_steps)
