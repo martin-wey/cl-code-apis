@@ -16,7 +16,7 @@ from transformers import (
     AutoTokenizer
 )
 
-from tasks import clm_pretraining
+from tasks import pretraining
 
 logger = get_logger(__name__)
 MAX_GPU_BATCH_SIZE = 12
@@ -110,6 +110,8 @@ def main(cfg: omegaconf.DictConfig):
         )
 
     def tokenize_function(examples):
+        if cfg.run.task == 'mlm':
+            return tokenizer(examples['source_code'], return_special_tokens_mask=True)
         return tokenizer(examples['source_code'])
 
     with accelerator.main_process_first():
@@ -137,7 +139,8 @@ def main(cfg: omegaconf.DictConfig):
             k: [t[i: i + block_size] for i in range(0, total_length, block_size)]
             for k, t in concatenated_examples.items()
         }
-        result['labels'] = result['input_ids'].copy()
+        if cfg.run.task == 'clm':
+            result['labels'] = result['input_ids'].copy()
         return result
 
     with accelerator.main_process_first():
@@ -151,8 +154,7 @@ def main(cfg: omegaconf.DictConfig):
     train_dataset = lm_datasets['train']
     valid_dataset = lm_datasets['validation']
 
-    if cfg.run.task == 'clm':
-        clm_pretraining.train(cfg, accelerator, model, train_dataset, valid_dataset)
+    pretraining.train(cfg, accelerator, model, tokenizer, train_dataset, valid_dataset)
 
 
 if __name__ == '__main__':

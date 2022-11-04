@@ -1,5 +1,6 @@
 """
-Pretraining a GPT-like model for causal language modeling.
+Pre-training a GPT-like model for causal language modeling or
+             a BERT-like model for masked language modeling.
 """
 import math
 import os
@@ -12,7 +13,7 @@ import transformers
 from accelerate.logging import get_logger
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from transformers import get_scheduler, default_data_collator
+from transformers import get_scheduler, default_data_collator, DataCollatorForLanguageModeling
 
 logger = get_logger(__name__)
 
@@ -43,13 +44,18 @@ def evaluate(cfg: omegaconf.DictConfig,
 def train(cfg: omegaconf.DictConfig,
           accelerator: accelerate.Accelerator,
           model: transformers.AutoModelForCausalLM,
+          tokenizer: transformers.AutoTokenizer,
           train_dataset: datasets.Dataset,
           valid_dataset: datasets.Dataset) -> None:
+    if cfg.run.task == 'clm':
+        data_collator = default_data_collator
+    else:
+        data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm_probability=cfg.run.mlm_probability)
     train_dataloader = DataLoader(
-        train_dataset, shuffle=True, collate_fn=default_data_collator, batch_size=cfg.run.per_device_train_batch_size
+        train_dataset, shuffle=True, collate_fn=data_collator, batch_size=cfg.run.per_device_train_batch_size
     )
     eval_dataloader = DataLoader(
-        valid_dataset, collate_fn=default_data_collator, batch_size=cfg.run.per_device_eval_batch_size
+        valid_dataset, collate_fn=data_collator, batch_size=cfg.run.per_device_eval_batch_size
     )
 
     # Optimizer
