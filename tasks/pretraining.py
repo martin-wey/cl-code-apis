@@ -73,6 +73,9 @@ def train(cfg: omegaconf.DictConfig,
     ]
     optimizer = torch.optim.AdamW(optimizer_grouped_parameters, lr=cfg.run.learning_rate)
 
+    def get_lr():
+        return optimizer.param_groups[0]['lr']
+
     # Scheduler and math around the number of training steps.
     lr_scheduler = get_scheduler(
         name=cfg.run.lr_scheduler_type,
@@ -103,20 +106,26 @@ def train(cfg: omegaconf.DictConfig,
     progress_bar = tqdm(range(cfg.run.max_train_steps), disable=not accelerator.is_local_main_process, desc='Training')
     completed_steps = 0
     starting_epoch = 0
+    best_metric = None
+    best_checkpoint_step = None
 
     if cfg.run.resume_from_checkpoint:
-        resume_path = os.path.join(cfg.run.base_path, cfg.run.resume_from_checkpoint)
-        accelerator.print(f"Resumed from checkpoint: {resume_path}")
-        accelerator.load_state(resume_path)
-        path = os.path.basename(resume_path)
+        if cfg.run.resume_from_checkpoint is not None or cfg.run.resume_from_checkpoint != "":
+            checkpoint_path = os.path.join(cfg.run.base_path, cfg.run.resume_from_checkpoint)
+            accelerator.print(f"Resumed from checkpoint: {checkpoint_path}")
+            accelerator.load_state(checkpoint_path)
+            path = os.path.basename(checkpoint_path)
+        # Extract the step of the checkpoint to continue from there
         training_difference = os.path.splitext(path)[0]
         resume_step = int(training_difference.replace('step_', ''))
-        starting_epoch = resume_step // len(train_dataloader)
 
     for epoch in range(starting_epoch, cfg.run.num_train_epochs):
         model.train()
         total_loss = 0
         for step, batch in enumerate(train_dataloader):
+            # We need to skip steps until we reach the resumed step
+            if cfg.run.resume_from_checkpoint and step < resume_step:
+                continue  # we need to skip steps until we reach the resumed step
             with accelerator.accumulate(model):
                 outputs = model(**batch)
                 loss = outputs.loss
@@ -133,14 +142,25 @@ def train(cfg: omegaconf.DictConfig,
                 completed_steps += 1
 
             if completed_steps % cfg.run.logging_steps == 0 and cfg.use_wandb:
-                accelerator.log({'train/loss': loss}, step=completed_steps)
+                accelerator.log({'train/loss': loss, 'lr': get_lr()}, step=completed_steps)
 
             if completed_steps % cfg.run.save_checkpoint_steps == 0:
                 logger.info("Running validation and saving model checkpoint.")
                 perplexity, eval_loss = evaluate(cfg, accelerator, model, eval_dataloader, valid_dataset)
                 accelerator.log({'eval/loss': eval_loss, 'eval/perplexity': perplexity}, step=completed_steps)
+
+                # save accelerator and pr-etrained model
                 accelerator.wait_for_everyone()
+                unwrapped_model = accelerator.unwrap_model(model)
+                unwrapped_model.save_pretrained(f'step_{completed_steps}/model', save_function=accelerator.save)
                 accelerator.save_state(output_dir=f'step_{completed_steps}')
+
+                # track the best metric and checkpoint step
+                if best_metric is None or best_metric > perplexity:
+                    best_metric = perplexity
+                    best_checkpoint_step = completed_steps
+                    accelerator.log({'best_perplexity': best_metric, 'best_checkpoint_step': best_checkpoint_step})
+
                 model.train()
             if completed_steps >= cfg.run.max_train_steps:
                 break
@@ -159,8 +179,14 @@ def train(cfg: omegaconf.DictConfig,
 
         accelerator.wait_for_everyone()
         unwrapped_model = accelerator.unwrap_model(model)
-        unwrapped_model.save_pretrained('model', save_function=accelerator.save)
+        unwrapped_model.save_pretrained(f'step_{completed_steps}/model', save_function=accelerator.save)
         accelerator.save_state(output_dir=f'step_{completed_steps}')
+
+        # track the best metric and checkpoint step
+        if best_metric is None or best_metric > perplexity:
+            best_metric = perplexity
+            best_checkpoint_step = completed_steps
+            accelerator.log({'best_perplexity': best_metric, 'best_checkpoint_step': best_checkpoint_step})
 
     logger.info('Evaluating model after training completed.')
     perplexity, eval_loss = evaluate(cfg, accelerator, model, eval_dataloader, valid_dataset)
