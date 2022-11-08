@@ -75,7 +75,7 @@ def main():
     # Save data in batches of samples_per_file
     output_dir = Path(args.dataset_dir)
 
-    for (ds, f) in ((ds_id_pretraining, 'in/pre-training'), (ds_id_finetuning, 'in/fine-tuning'), (ds_ood, 'ood')):
+    for (ds, f) in ((ds_id_pretraining, 'id/pre-training'), (ds_id_finetuning, 'id/fine-tuning'), (ds_ood, 'ood')):
         for file_number, index in enumerate(range(0, len(ds), args.samples_per_file)):
             file_path = str(output_dir / f / f'file-{file_number + 1:03}.json')
             end_index = min(len(ds), index + args.samples_per_file)
