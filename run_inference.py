@@ -6,12 +6,10 @@ from accelerate import Accelerator
 from accelerate.logging import get_logger
 from accelerate.utils import set_seed
 from datasets import load_dataset
-from torch.utils.data import DataLoader
 from transformers import (
     AutoModelForCausalLM,
     AutoModelForMaskedLM,
-    AutoTokenizer,
-    default_data_collator
+    AutoTokenizer
 )
 
 from tasks import code_generation
@@ -47,45 +45,19 @@ def main(cfg: omegaconf.DictConfig):
     dataset_dir = os.path.join(cfg.run.base_path, cfg.run.dataset_dir)
     raw_dataset = load_dataset(dataset_dir)
     raw_dataset['train'] = load_dataset(dataset_dir, split='train[:5%]')
-
-    # raw_dataset['train'] = raw_dataset['train'].remove_columns(
-    #     [cname for cname in raw_dataset['train'].column_names if cname != 'source_code'])
-
-    def tokenize_function(examples):
-        return_special_tokens = False
-        if cfg.run.task == 'mlm':
-            return_special_tokens = True
-        return tokenizer(
-            examples['source_code'],
-            padding=False,
-            truncation=True,
-            max_length=tokenizer.model_max_length,
-            return_attention_mask=False,
-            return_special_tokens_mask=return_special_tokens)
-
-    with accelerator.main_process_first():
-        tokenized_dataset = raw_dataset.map(
-            tokenize_function,
-            batched=True,
-            num_proc=cfg.run.preprocessing_num_workers,
-            load_from_cache_file=True,
-            remove_columns=['source_code'],
-            desc="Running tokenizer on dataset",
-        )
-
-    dataset_api_seqs = tokenized_dataset['train']['api_seq']
-    print(dataset_api_seqs)
-
-    eval_dataloader = DataLoader(tokenized_dataset['train'], collate_fn=default_data_collator,
-                                 batch_size=cfg.run.per_device_eval_batch_size)
-    model, eval_dataloader = accelerator.prepare(model, eval_dataloader)
+    raw_dataset['train'] = raw_dataset['train'].remove_columns(['method_name', 'docstring', 'hash', 'lines'])
 
     if cfg.run.task == 'clm':
         if 'perplexity' in cfg.run.evaluate:
-            loss, perplexity = code_generation.evaluate_perplexity(cfg, accelerator, model, eval_dataloader)
+            logger.info("Evaluating loss and perplexity on input dataset.")
+            loss, perplexity = code_generation.evaluate_perplexity(cfg, accelerator, model, tokenizer, raw_dataset)
             logger.info(f'Loss: {round(loss, 4)} | perplexity: {round(perplexity, 4)}')
-        elif 'generation' in cfg.run.evaluate:
-            code_generation.evaluate_generation(cfg, accelerator, model, tokenizer, eval_dataloader)
+        elif 'token_generation' in cfg.run.evaluate:
+            logger.info("Evaluating model on token generation.")
+            code_generation.evaluate_token_generation(cfg, accelerator, model, tokenizer, raw_dataset)
+        elif 'api_generation' in cfg.run.evaluate:
+            logger.info("Evaluating model on api generation.")
+            code_generation.evaluate_api_generation(cfg, accelerator, model, tokenizer, raw_dataset)
     elif cfg.run.task == 'mlm':
         pass
 

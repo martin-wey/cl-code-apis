@@ -1,23 +1,55 @@
 import difflib
 
 import accelerate
+import datasets
 import omegaconf
 import torch
 import transformers
+from accelerate.logging import get_logger
 from torch.utils.data import DataLoader
+from transformers import default_data_collator
 from tqdm import tqdm
 
-from utils.utils import get_apis_tokenized
+OOD_APIS = ('InputStreamReader', 'Collections')
+logger = get_logger(__name__)
+
+
+def tokenize_function(cfg, tokenizer, examples):
+    return_special_tokens = False
+    if cfg.run.task == 'mlm':
+        return_special_tokens = True
+    return tokenizer(
+        examples['source_code'],
+        padding=False,
+        truncation=True,
+        max_length=tokenizer.model_max_length,
+        return_attention_mask=False,
+        return_special_tokens_mask=return_special_tokens
+    )
 
 
 def evaluate_perplexity(cfg: omegaconf.DictConfig,
                         accelerator: accelerate.Accelerator,
                         model: transformers.AutoModelForCausalLM,
-                        eval_dataloader: DataLoader):
+                        tokenizer: transformers.AutoTokenizer,
+                        dataset: datasets.Dataset):
+    with accelerator.main_process_first():
+        tokenized_dataset = dataset.map(
+            lambda e: tokenize_function(cfg, tokenizer, e),
+            batched=True,
+            num_proc=cfg.run.preprocessing_num_workers,
+            load_from_cache_file=True,
+            remove_columns=['source_code'],
+            desc="Running tokenizer on dataset",
+        )
+    eval_dataloader = DataLoader(tokenized_dataset['train'], collate_fn=default_data_collator,
+                                 batch_size=cfg.run.per_device_eval_batch_size)
+    model, eval_dataloader = accelerator.prepare(model, eval_dataloader)
+
     model.eval()
     losses = []
-    for step, batch in enumerate(
-            tqdm(eval_dataloader, desc='Validation', disable=not accelerator.is_local_main_process)):
+    model.eval()
+    for step, batch in enumerate(tqdm(eval_dataloader, desc='Validation')):
         with torch.no_grad():
             outputs = model(**batch)
 
@@ -43,31 +75,62 @@ def evaluate_perplexity(cfg: omegaconf.DictConfig,
     return loss.item(), perplexity.item()
 
 
-def evaluate_generation(cfg: omegaconf.DictConfig,
-                        accelerator: accelerate.Accelerator,
-                        model: transformers.AutoModelForCausalLM,
-                        tokenizer: transformers.AutoTokenizer,
-                        eval_dataloader: DataLoader):
+def get_test_samples(example):
+    samples = []
+    # split api usages
+    api_usages = list(filter(lambda e: e != '', example['api_seq'].split('|')))
+    api_usages = [u.split('.') for u in api_usages]
+    # remove java wildcards (e.g., ArrayList<String> -> ArrayList)
+    #   and get a list of api usage in the form of [api_class, api_call, index_in_source_code]
+    api_usages = list(map(lambda e: [e[0].strip().split(' ')[0],
+                                     e[1].strip().split(' ')[0],
+                                     e[1].strip().split(' ')[1]], api_usages))
+    # to only create OOD samples
+    # api_usages = list(filter(lambda e: e[0] in OOD_APIS, api_usages))
+    for usage in api_usages:
+        # API class initialization case (e.g., new InputStreamReader ...)
+        if usage[1] == '<init>':
+            usage_pred = usage[0]
+        # API call case (e.g., Collections.sort ...)
+        else:
+            usage_pred = usage[1]
+        end_idx = int(usage[2])
+        new_sample = {
+            'api_seq': '',
+            'source_code': example['source_code'][:end_idx],
+            'is_test_sample': True,
+            'ground_truth': f'{usage[0]}.{usage[1]}'
+        }
+        samples.append(new_sample)
+    return samples
+
+
+def evaluate_token_generation(cfg: omegaconf.DictConfig,
+                              accelerator: accelerate.Accelerator,
+                              model: transformers.AutoModelForCausalLM,
+                              tokenizer: transformers.AutoTokenizer,
+                              dataset: datasets.Dataset):
+    eval_dataset_tokenized = dataset['train'].map(
+        lambda e: tokenize_function(cfg, tokenizer, e),
+        batched=True,
+        num_proc=cfg.run.preprocessing_num_workers,
+        load_from_cache_file=True,
+        remove_columns=['source_code'],
+        desc="Running tokenizer on test dataset",
+    )
+    eval_dataloader = DataLoader(eval_dataset_tokenized, collate_fn=default_data_collator,
+                                 batch_size=cfg.run.per_device_eval_batch_size)
+    model, eval_dataloader = accelerator.prepare(model, eval_dataloader)
+
     model.eval()
 
-    api_cls_ood_tokenized, api_calls_ood_tokenized = get_apis_tokenized(tokenizer, ('HashMap.', 'Set.'))
-    print(api_cls_ood_tokenized)
-    print('---------------')
-    print(api_calls_ood_tokenized)
-
-    for step, sample in enumerate(
-            tqdm(eval_dataloader, desc='Validation', disable=not accelerator.is_local_main_process)):
-        pass
-
-    """
     acc = 0.0
     ratio = 0.0
     n_test = 0
 
     total_pred = []
     total_gt = []
-    for step, sample in enumerate(
-            tqdm(eval_dataloader, desc='Validation', disable=not accelerator.is_local_main_process)):
+    for step, sample in enumerate(tqdm(eval_dataloader, desc='Validation')):
         with torch.no_grad():
             outputs = model(**sample)
             pred_ids = outputs.logits.argmax(-1)
@@ -138,4 +201,50 @@ def evaluate_generation(cfg: omegaconf.DictConfig,
         acc = round(acc / n_test, 4)
         ratio = round(ratio / n_test, 2)
     print(acc, ratio, n_test)
-    """
+
+
+def evaluate_api_generation(cfg: omegaconf.DictConfig,
+                            accelerator: accelerate.Accelerator,
+                            model: transformers.AutoModelForCausalLM,
+                            tokenizer: transformers.AutoTokenizer,
+                            dataset: datasets.Dataset):
+    # @todo: externalize the test samples creation
+
+    # add a column to determine whether a sample should be included in the test set
+    #   we create the new test samples according to the API location in the `source_code` field.
+    is_test_sample = [False] * len(dataset['train'])
+    ground_truth = [None] * len(dataset['train'])
+    dataset['train'] = dataset['train'].add_column('is_test_sample', is_test_sample)
+    dataset['train'] = dataset['train'].add_column('ground_truth', ground_truth)
+    eval_dataset = dataset['train'].select(list(range(25)))
+
+    logger.info('Generating test samples.')
+    for sample in tqdm(eval_dataset):
+        for new_sample in get_test_samples(sample):
+            eval_dataset = eval_dataset.add_item(new_sample)
+    # remove non-test samples and too long samples for the model
+    eval_dataset = eval_dataset.filter(lambda e: e['is_test_sample'])
+    eval_dataset_tokenized = eval_dataset.map(
+        lambda e: tokenize_function(cfg, tokenizer, e),
+        batched=True,
+        num_proc=cfg.run.preprocessing_num_workers,
+        load_from_cache_file=True,
+        remove_columns=['source_code'],
+        desc="Running tokenizer on test samples",
+    )
+    eval_dataloader = DataLoader(eval_dataset_tokenized, collate_fn=default_data_collator,
+                                 batch_size=cfg.run.per_device_eval_batch_size)
+    model, eval_dataloader = accelerator.prepare(model, eval_dataloader)
+
+    model.eval()
+    for step, sample in enumerate(tqdm(eval_dataloader, desc='Validation')):
+        with torch.no_grad():
+            greedy_output = model.generate(sample['input_ids'], max_new_tokens=1)
+            print(f'Ground-truth: {eval_dataset_tokenized[step]["ground_truth"]}')
+            print(greedy_output)
+            print(tokenizer.decode(sample['input_ids'].squeeze(), skip_special_tokens=True))
+            print('-' * 100)
+            print(tokenizer.decode(greedy_output[0], skip_special_tokens=True))
+            print('=' * 100)
+
+            if step == 10: break

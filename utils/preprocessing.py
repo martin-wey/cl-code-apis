@@ -80,7 +80,7 @@ def main():
     if args.seed > 0:
         set_seed(args.seed)
 
-    ds = load_dataset(args.dataset_dir, data_files={'train': 'data.csv'}, split='train')
+    ds = load_dataset(args.dataset_dir, data_files={'train': 'data.json'}, split='train')
     ds = ds.map(preprocess, num_proc=args.num_proc)
 
     uniques = set(ds.unique('hash'))

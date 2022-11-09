@@ -1,11 +1,14 @@
 ---
 task: clm
-evaluate: ['generation']
+evaluate:
+  - token_generation
+  # - api_generation
+  # - perplexity
 
 # dataset name for loading from HF hub
 dataset_name: null
 # if dataset stored locally
-dataset_dir: data/preprocessed/in/fine-tuning
+dataset_dir: data/preprocessed/
 resume_from_checkpoint: null
 
 per_device_eval_batch_size: 1
