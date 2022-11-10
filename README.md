@@ -1,28 +1,24 @@
-# cl-code
+# Continual learning for code
 
-## Data extraction
-We extract a Python corpus from Github using the [Code-LMs](https://github.com/VHellendoorn/Code-LMs) repository. 
-First, clone the repository, and navigate in the _Data_ folder. The full data extraction process is explained in the README.md file contained within this folder.
-```sh
-git clone https://github.com/VHellendoorn/Code-LMs
-cd Code-LMs/Data
-```
-To obtain links to the Python repositories and extract those links, run:
-```sh
-mkdir TopLists
-python3 gh_crawler.py python
-```
-Prior to that, replace the *TOKEN* in `gh_crawler.py` at line 6. To clone the repositories on your hardware, run:
-```sh
-cat TopLists/java-top-repos.txt | xargs -P16 -n1 -I% bash clone_repo.sh % java
-```
-And, to deduplicate the data, run:
-```sh
-python3 deduplicate.py
-```
+## Generating the pre-training and fine-tuning datasets
 
-@todo: 
-We want to extract codes that use specific versions of libraries. Therefore, we need to
-- filter out projects without `requirements.txt`
-- fetch cloned projects whose `requirements.txt` contains the version of the targetted library (e.g., `PyTorch>=1.7.0`)
-- extract functions that use the library (not sure how to do that?)
+### Data preprocessing
+We used 50k-c java dataset as raw data. It consists of 50k compilable Java projects. 
+From each project, we extract their java methods and the API usage sequences in every method.
+
+Next step is to preprocess the dataset using the `utils/preprocessing.py` script as follows:
+```shell
+python utils/preprocessing.py \
+  --dataset_dir ./data \
+  --output_dir ./data/preprocessed \
+  --samples_per_file 100000 \
+  --line_max 250 \
+  --num_proc 8 \
+  --seed 42
+```
+It will deduplicate the dataset and filter out samples with too many lines (arg `line_max`). The preprocessed
+data are saved and compressed under the specified output directory. 
+
+### Data splitting
+
+To split the preprocessed data into in-distribution and out-of-distribution data, use the `utils/data_splitting.py` script:

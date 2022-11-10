@@ -22,7 +22,7 @@ def filter_contains_api(example):
     # remove useless spaces
     api_usages = [u.split('.') for u in api_usages]
     # remove the generic types of the API class, keep the API class name
-    api_usages = list(map(lambda e: e[0].strip().split()[0], api_usages))
+    api_usages = list(map(lambda e: e[0].strip().split(' ')[0], api_usages))
     api_usages_set = set(api_usages)
 
     for api in APIS:
