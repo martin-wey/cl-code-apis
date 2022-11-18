@@ -1,7 +1,6 @@
 import hashlib
 import os
 import re
-import time
 from argparse import Namespace
 
 from datasets import load_dataset
@@ -13,7 +12,8 @@ config = {
     'line_max': 250,
     'repo_name': 'github-java-methods',
     'org': 'martiwey',
-    'shard_size': 1000 << 20}
+    'shard_size': 1000 << 20
+}
 
 args = Namespace(**config)
 
@@ -67,7 +67,7 @@ def filter(example, uniques, args):
     """Filter dataset with heuristics."""
     if not check_uniques(example, uniques):
         return False
-    elif example['line_max'] > args.line_max:
+    elif example['lines'] > args.line_max:
         return False
     else:
         return True
@@ -78,27 +78,21 @@ json_files = [os.path.join(args.dataset_path, pos_json) for pos_json in os.listd
 print(f'Number of json files: {len(json_files)}')
 
 # Load dataset
-t_start = time.time()
 ds = load_dataset('json', data_files=json_files, chunksize=40 << 20)
-print(f"Time to load dataset: {time.time() - t_start:.2f}")
 
 # Run preprocessing
-t_start = time.time()
 ds = ds.map(preprocess, num_proc=args.num_workers)
-print(f"Time to preprocess dataset: {time.time() - t_start:.2f}")
 print(ds)
 
 # Deduplicate hashes
-uniques = set(ds.unique('hash'))
-frac = len(uniques) / len(ds)
+uniques = set(ds['train']['hash'])
+frac = len(uniques) / len(ds['train'])
 print(f"Fraction of duplicates: {1 - frac:.2%}")
 
 # Deduplicate data and apply heuristics
-t_start = time.time()
 ds = ds.filter(filter, fn_kwargs={'uniques': uniques, 'args': args})
 ds = ds.remove_columns(['lines', 'hash'])
-print(f"Time to filter dataset: {time.time() - t_start:.2f}")
-print(f"Size of filtered dataset: {len(ds)}")
+print(f"Size of filtered dataset: {len(ds['train'])}")
 
 # Save dataset in HF hub repo
-ds.push_to_hub(f'{args.org}/{args.repo_name}', shard_size=args.shard_size)
+ds.push_to_hub(f'{args.org}/{args.repo_name}', max_shard_size=args.shard_size)
