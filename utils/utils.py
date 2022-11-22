@@ -3,12 +3,10 @@ import tokenize
 from io import StringIO
 import numpy as np
 
-from .jdk_apis import JDK_APIS
-
 
 def get_apis_tokenized(tokenizer, selected_apis=None):
     #  api_cls_ood_tokenized, api_calls_ood_tokenized = get_apis_tokenized(tokenizer, ('HashMap', 'Set'))
-    api_list = JDK_APIS.split()
+    api_list = []
     api_dict = {}
 
     for api in api_list:
