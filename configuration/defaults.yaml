@@ -8,9 +8,10 @@ defaults:
 
 run:
   run_name: clm_pretraining
+  push_to_hub: true
   # leave base_path to null
   base_path: null
-  preprocessing_num_workers: 4
+  preprocessing_num_workers: 8
   seed: 42
 
 device: cuda
