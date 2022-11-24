@@ -36,7 +36,10 @@ def main(cfg: omegaconf.DictConfig):
         accelerator_log_kwargs['log_with'] = 'wandb'
         accelerator_log_kwargs['logging_dir'] = os.getcwd()
 
-    accelerator = Accelerator(**accelerator_log_kwargs)
+    accelerator = Accelerator(
+        mixed_precision=cfg.run.mixed_precision,
+        gradient_accumulation_steps=cfg.run.gradient_accumulation_steps,
+        **accelerator_log_kwargs)
     if cfg.use_wandb:
         accelerator.init_trackers(project_name='cl-code')
     logger.info(accelerator.state, main_process_only=True)
@@ -84,7 +87,6 @@ def main(cfg: omegaconf.DictConfig):
     logger.info(f"Training a new model from scratch (# parameters: {model_params})")
     model.resize_token_embeddings(len(tokenizer))
 
-    # limit memory footprint
     if cfg.run.gradient_checkpointing:
         model.gradient_checkpointing_enable()
 

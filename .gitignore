@@ -131,3 +131,4 @@ dmypy.json
 outputs/
 clustering/
 data/
+/cedar_gpu_node_pretraining_job.sh

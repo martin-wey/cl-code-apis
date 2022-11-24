@@ -3,7 +3,6 @@ Pre-training a GPT-like model for causal language modeling or
              a BERT-like model for masked language modeling.
 """
 import math
-import os
 
 import accelerate
 import datasets
@@ -30,9 +29,10 @@ def evaluate(cfg: omegaconf.DictConfig,
     for step, batch in enumerate(
             tqdm(valid_dataloader, desc='Validation', disable=not accelerator.is_local_main_process)):
         with torch.no_grad():
-            outputs = model(**batch)
+            outputs = model(input_ids=batch['input_ids'].to(accelerator.device),
+                            labels=batch['labels'].to(accelerator.device))
         loss = outputs.loss
-        losses.append(accelerator.gather(loss.repeat(cfg.run.per_device_eval_batch_size)))
+        losses.append(accelerator.gather(loss.repeat(cfg.run.valid_batch_size)))
     losses = torch.cat(losses)
     losses = losses[:len(valid_dataset)]
     try:
@@ -62,18 +62,6 @@ def train(cfg: omegaconf.DictConfig,
     ]
     optimizer = AdamW(optimizer_grouped_parameters, lr=cfg.run.learning_rate)
 
-    # Get gradient accumulation steps from deepspeed config if available
-    if accelerator.state.deepspeed_plugin is not None:
-        cfg.run.gradient_accumulation_steps = accelerator.state.deepspeed_plugin.deepspeed_config[
-            'gradient_accumulation_steps'
-        ]
-
-    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / cfg.run.gradient_accumulation_steps)
-    if cfg.run.max_train_steps is None:
-        cfg.run.max_train_steps = cfg.run.num_train_epochs * num_update_steps_per_epoch
-    else:
-        cfg.run.num_train_epochs = math.ceil(cfg.run.max_train_steps / num_update_steps_per_epoch)
-
     lr_scheduler = get_scheduler(
         name=cfg.run.lr_scheduler_type,
         optimizer=optimizer,
@@ -90,47 +78,36 @@ def train(cfg: omegaconf.DictConfig,
         model, optimizer, train_dataloader, valid_dataloader, lr_scheduler
     )
 
-    # We need to recalculate our total training steps as the size of the training dataloader may have changed.
-    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / cfg.run.gradient_accumulation_steps)
-    cfg.run.max_train_steps = cfg.run.num_train_epochs * num_update_steps_per_epoch
-
-    total_batch_size = cfg.run.train_batch_size * cfg.run.gradient_accumulation_steps
-
-    logger.info("***** Running training *****")
-    logger.info(f"  Num Epochs = {cfg.run.num_train_epochs}")
-    logger.info(f"  Instantaneous batch size per device = {cfg.run.train_batch_size / accelerator.num_processes}")
-    logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
-    logger.info(f"  Gradient Accumulation steps = {cfg.run.gradient_accumulation_steps}")
-    logger.info(f"  Total optimization steps = {cfg.run.max_train_steps}")
-
-    progress_bar = tqdm(range(cfg.run.max_train_steps), disable=not accelerator.is_local_main_process)
+    progress_bar = tqdm(range(cfg.run.max_train_steps), disable=not accelerator.is_local_main_process, desc='Training')
     completed_steps = 0
     starting_epoch = 0
     best_metric = None
     best_metric_checkpoint = None
 
     model.train()
-    for epoch in range(1, cfg.run.num_train_epochs + 1):
-        for step, batch in enumerate(train_dataloader, start=1):
+    for epoch in range(cfg.run.num_train_epochs):
+        for step, batch in enumerate(train_dataloader):
             with accelerator.accumulate(model):
-                outputs = model(**batch)
+                outputs = model(**batch, use_cache=False)
                 loss = outputs.loss
                 accelerator.backward(loss)
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()
 
+            track_loss = loss.detach().float().item()
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
-                progress_bar.update(1)
                 completed_steps += 1
+                progress_bar.update(1)
+                progress_bar.set_description(f'step {completed_steps} - loss {track_loss}')
 
             if completed_steps % cfg.run.logging_steps == 0:
-                accelerator.log({'train/loss': loss.detach().float(), 'lr': get_lr(), 'steps': completed_steps}, step=completed_steps)
+                accelerator.log({'train/loss': track_loss, 'lr': get_lr(), 'steps': completed_steps}, step=completed_steps)
 
             if completed_steps > 0 and completed_steps % cfg.run.save_checkpoint_steps == 0:
                 logger.info("Running validation and saving model checkpoint.")
-                perplexity, eval_loss = evaluate(cfg, accelerator, model, valid_dataloader)
+                perplexity, eval_loss = evaluate(cfg, accelerator, model, valid_dataloader, valid_dataset)
                 accelerator.log({'eval/loss': eval_loss, 'eval/perplexity': perplexity}, step=completed_steps)
 
                 # save accelerator and pre-trained model
@@ -149,4 +126,3 @@ def train(cfg: omegaconf.DictConfig,
                 model.train()
             if completed_steps >= cfg.run.max_train_steps:
                 break
-    logger.info("Finished training.")
