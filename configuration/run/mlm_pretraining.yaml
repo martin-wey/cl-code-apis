@@ -16,6 +16,7 @@ lr_scheduler_type: cosine
 num_warmup_steps: 750
 gradient_accumulation_steps: 16
 gradient_checkpointing: true
+num_train_epochs: 25
 max_train_steps: 150000
 max_eval_steps: -1
 seq_length: 1024

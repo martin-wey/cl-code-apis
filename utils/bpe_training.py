@@ -17,7 +17,7 @@ def batch_iterator(iter_dataset, args, batch_size=10):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset_name', default='martiwey/github-java-methods-small-id-train', type=str,
+    parser.add_argument('--dataset_name', default='martiwey/gh-java-methods-small-id-train', type=str,
                         help='Dataset name on the Huggingface hub.')
     parser.add_argument('--output_dir', default='./data/bpe_tokenizer', type=str,
                         help='Output directory.')
@@ -37,7 +37,7 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_type)
     base_vocab = list(bytes_to_unicode().values())
 
-    dataset = load_dataset(args.dataset_dir, split='train', streaming=True, use_auth_token=True)
+    dataset = load_dataset(args.dataset_name, split='train', streaming=True, use_auth_token=True)
     iter_dataset = iter(dataset)
 
     new_tokenizer = tokenizer.train_new_from_iterator(

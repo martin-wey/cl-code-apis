@@ -11,7 +11,7 @@ run:
   push_to_hub: true
   # leave base_path to null
   base_path: null
-  preprocessing_num_workers: 8
+  preprocessing_num_workers: 16
   seed: 42
 
 device: cuda

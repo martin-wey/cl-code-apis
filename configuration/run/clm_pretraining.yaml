@@ -5,8 +5,8 @@ task: clm
 train_dataset_name: martiwey/gh-java-methods-small-id-train
 valid_dataset_name: martiwey/gh-java-methods-small-id-valid
 
-train_batch_size: 12
-valid_batch_size: 12
+train_batch_size: 2
+valid_batch_size: 2
 shuffle_buffer: 10000
 mixed_precision: fp16
 weight_decay: 0.1
@@ -15,6 +15,7 @@ lr_scheduler_type: cosine
 num_warmup_steps: 750
 gradient_accumulation_steps: 16
 gradient_checkpointing: true
+num_train_epochs: 25
 max_train_steps: 150000
 max_eval_steps: -1
 seq_length: 1024
