@@ -52,7 +52,7 @@ def evaluate_perplexity(cfg: omegaconf.DictConfig,
         load_from_cache_file=True,
         desc=f"Grouping texts in chunks of {block_size}",
     )
-    eval_dataloader = DataLoader(
+    dataloader = DataLoader(
         dataset_blocks,
         collate_fn=default_data_collator,
         batch_size=cfg.run.batch_size
@@ -60,7 +60,7 @@ def evaluate_perplexity(cfg: omegaconf.DictConfig,
 
     model.eval()
     losses = []
-    for step, batch in enumerate(tqdm(eval_dataloader)):
+    for step, batch in enumerate(tqdm(dataloader)):
         with torch.no_grad():
             outputs = model(**batch)
             loss = outputs.loss

@@ -12,7 +12,7 @@ from transformers import (
     set_seed
 )
 
-from tasks.code_completion import evaluate_token_completion
+from tasks.code_completion import evaluate_token_completion, evaluate_api_completion
 from tasks.perplexity import evaluate_perplexity
 
 logger = logging.getLogger(__name__)
@@ -54,7 +54,7 @@ def main(cfg: omegaconf.DictConfig):
         if 'token_completion' in cfg.run.evaluate:
             evaluate_token_completion(cfg, model, tokenizer, dataset)
         if 'api_completion' in cfg.run.evaluate:
-            pass
+            evaluate_api_completion(cfg, model, tokenizer, dataset)
     elif cfg.run.task == 'mlm':
         pass
 
