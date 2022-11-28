@@ -1,0 +1,11 @@
+---
+task: clm
+evaluate:
+  - token_completion
+  # - api_completion
+  # - perplexity
+
+# dataset name for loading from HF hub
+dataset_name: martiwey/gh-java-methods-small-ood
+
+batch_size: 16

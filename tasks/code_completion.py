@@ -1,164 +1,198 @@
-import difflib
-
-import accelerate
 import datasets
+import numpy as np
 import omegaconf
 import torch
 import transformers
-from accelerate.logging import get_logger
 from torch.utils.data import DataLoader
-from transformers import default_data_collator
 from tqdm import tqdm
-
-OOD_APIS = ('InputStreamReader', 'Collections')
-logger = get_logger(__name__)
+from transformers import default_data_collator
 
 
-def tokenize_function(cfg, tokenizer, example):
-    return_special_tokens = False
-    if cfg.run.task == 'mlm':
-        return_special_tokens = True
-    return tokenizer(
-        example['source_code'],
-        padding=False,
-        truncation=True,
-        max_length=tokenizer.model_max_length,
-        return_attention_mask=False,
-        return_special_tokens_mask=return_special_tokens
-    )
-
-
-def evaluate_perplexity(cfg: omegaconf.DictConfig,
-                        accelerator: accelerate.Accelerator,
-                        model: transformers.AutoModelForCausalLM,
-                        tokenizer: transformers.AutoTokenizer,
-                        dataset: datasets.Dataset):
-    with accelerator.main_process_first():
-        tokenized_dataset = dataset.map(
-            lambda e: tokenize_function(cfg, tokenizer, e),
-            batched=True,
-            num_proc=cfg.run.preprocessing_num_workers,
-            load_from_cache_file=True,
-            remove_columns=['source_code', 'ood'],
-            desc="Running tokenizer on dataset",
-        )
-    eval_dataloader = DataLoader(tokenized_dataset['train'], collate_fn=default_data_collator,
-                                 batch_size=cfg.run.per_device_eval_batch_size)
-    model, eval_dataloader = accelerator.prepare(model, eval_dataloader)
-
-    model.eval()
-    losses = []
-    for step, batch in enumerate(
-            tqdm(eval_dataloader, desc='Validation', disable=not accelerator.is_local_main_process)):
-        with torch.no_grad():
-            outputs = model(batch['input_ids'], labels=batch['input_ids'])
-        loss = outputs.loss.repeat(cfg.run.per_device_eval_batch_size)
-        losses.append(accelerator.gather(loss))
-    loss = torch.mean(torch.cat(losses))
-    try:
-        perplexity = torch.exp(loss)
-    except OverflowError:
-        perplexity = float("inf")
-    return loss.item(), perplexity.item()
-
-
-def evaluate_token_generation(cfg: omegaconf.DictConfig,
-                              accelerator: accelerate.Accelerator,
+def evaluate_token_completion(cfg: omegaconf.DictConfig,
                               model: transformers.AutoModelForCausalLM,
                               tokenizer: transformers.AutoTokenizer,
                               dataset: datasets.Dataset):
-    eval_dataset_tokenized = dataset['train'].map(
-        lambda e: tokenize_function(cfg, tokenizer, e),
+    def tokenize_function(example):
+        return tokenizer(
+            example['source_code'],
+            padding=False,
+            truncation=True,
+            max_length=tokenizer.model_max_length,
+            return_attention_mask=False
+        )
+
+    dataset_tokenized = dataset.map(
+        tokenize_function,
         batched=True,
         num_proc=cfg.run.preprocessing_num_workers,
         load_from_cache_file=True,
-        remove_columns=['source_code', 'ood'],
+        remove_columns=['source_code', 'api_seq', 'domain', 'api'],
         desc="Running tokenizer on test dataset",
     )
-    eval_dataloader = DataLoader(eval_dataset_tokenized, collate_fn=default_data_collator,
-                                 batch_size=cfg.run.per_device_eval_batch_size)
-    model, eval_dataloader = accelerator.prepare(model, eval_dataloader)
+
+    pass_1 = 0
+    pass_5 = 0
+    pass_10 = 0
+    n_test = 1
+
+    def decode_ids(idxs):
+        codes = ''
+        for idx in idxs:
+            to_add = tokenizer.convert_ids_to_tokens(idx)
+            if tokenizer.convert_ids_to_tokens(idx)[0] == '\u0120':
+                if not codes.endswith(' '):
+                    codes += ' ' + to_add[1:]
+                else:
+                    codes += to_add[1:]
+            elif idx in [tokenizer.bos_token_id, tokenizer.eos_token_id, tokenizer.sep_token_id,
+                          tokenizer.pad_token_id]:
+                codes += ' ' + to_add + ' '
+            else:
+                codes += to_add
+        return codes.strip(' ')
 
     model.eval()
+    progress_bar = tqdm(range(len(dataset_tokenized)))
+    for step, ex in enumerate(iter(dataset_tokenized)):
+        input_ids = torch.tensor(ex['input_ids']).to(cfg.device)
 
-    acc = 0.0
-    ratio = 0.0
-    n_test = 0
-
-    total_pred = []
-    total_gt = []
-    for step, sample in enumerate(tqdm(eval_dataloader, desc='Validation')):
         with torch.no_grad():
-            outputs = model(**sample)
+            outputs = model(input_ids)
             pred_ids = outputs.logits.argmax(-1)
+
         all_pred = []
         all_gt = []
-        for pred, gt in zip(pred_ids, sample['input_ids']):
-            pred = pred.cpu().tolist()
-            gt = gt.cpu().tolist()
 
-            now_gt = None
-            now_pred = None
-            for i, y in enumerate(gt):
-                if i == 0:
-                    # predict bos token
-                    current_gt = [y]
-                    current_pred = [0]
-                    now_gt = [y]
-                    now_pred = [0]
-                    if y in [tokenizer.bos_token_id, tokenizer.eos_token_id, tokenizer.sep_token_id,
-                             tokenizer.pad_token_id]:
-                        all_pred.append(tokenizer.decode(current_pred).strip().split()[0])
-                        all_gt.append(tokenizer.decode(current_gt).strip())
-                        now_gt.clear()
-                        now_pred.clear()
-                else:
-                    # \u0120 == space = beginning/end of a token
-                    if tokenizer.convert_ids_to_tokens(y)[0] == '\u0120':
-                        if len(now_gt) > 0:
-                            try:
-                                all_pred.append(tokenizer.decode(now_pred).strip().split()[0])
-                            except IndexError:
-                                all_pred.append('<SPACE>')
-                            all_gt.append(tokenizer.decode(now_gt).strip())
-                            now_gt.clear()
-                            now_pred.clear()
-                    if y in [tokenizer.bos_token_id, tokenizer.eos_token_id, tokenizer.sep_token_id,
-                             tokenizer.pad_token_id]:
-                        if len(now_gt) > 0:
-                            try:
-                                all_pred.append(tokenizer.decode(now_pred).strip().split()[0])
-                            except IndexError:
-                                all_pred.append('<SPACE>')
-                            all_gt.append(tokenizer.decode(now_gt).strip())
-                        now_gt = [y]
-                        now_pred = [pred[i - 1]]
+        print(pred_ids.shape, pred_ids)
+        print(input_ids.shape, input_ids)
+
+        for pred, gt in zip(pred_ids, input_ids):
+            pass
+
+        """
+        with torch.no_grad():
+            outputs = model(input_ids)
+            pred_top_k = outputs.logits.topk(10).indices
+
+        all_pred = []
+        all_gt = []
+
+        pred = pred_top_k.cpu().numpy()
+        gt = input_ids.cpu().tolist()
+
+        now_gt = None
+        now_pred = None
+        for i, y in enumerate(gt):
+            if i == 0:
+                # predict bos token
+                now_gt = [y]
+                now_pred = [[0] for _ in range(10)]
+                if y in [tokenizer.bos_token_id, tokenizer.eos_token_id, tokenizer.sep_token_id,
+                         tokenizer.pad_token_id]:
+                    current_decoded = []
+                    for p in now_pred:
+                        current_decoded.append(tokenizer.decode(p).strip().split()[0])
+                    all_pred.append(current_decoded)
+                    all_gt.append(decode_ids(now_gt).strip())
+                    now_gt = []
+                    now_pred = []
+            else:
+                # \u0120 == space = beginning/end of a token
+                if tokenizer.convert_ids_to_tokens(y)[0] == '\u0120':
+                    if len(now_gt) > 0:
+                        id_loop = 0
                         try:
-                            all_pred.append(tokenizer.decode(now_pred).strip().split()[0])
+                            for current_pred in now_pred:
+                                current_decoded = []
+                                for p in current_pred:
+                                    current_decoded.append(tokenizer.decode(p).strip().split()[0])
+                                all_pred.append(current_decoded)
+                                id_loop += 1
                         except IndexError:
-                            all_pred.append('<SPACE>')
-                        all_gt.append(tokenizer.decode(now_gt).strip())
-                        now_gt.clear()
-                        now_pred.clear()
-                        continue
+                            for _ in now_pred[id_loop:]:
+                                current_decoded = ['<SPACE>' for _ in range(10)]
+                                all_pred.append(current_decoded)
+                                id_loop += 1
+                        all_gt.append(decode_ids(now_gt).strip())
+                        now_gt = []
+                        now_pred = []
+
+                        print(all_pred)
+                        print('----------------------------------')
+                        print(all_gt)
+                        print(f'First IF: {len(all_pred)} - {len(all_gt)}')
+
+                if y in [tokenizer.bos_token_id, tokenizer.eos_token_id, tokenizer.sep_token_id,
+                         tokenizer.pad_token_id]:
+                    if len(now_gt) > 0:
+                        id_loop = 0
+                        try:
+                            for current_pred in now_pred:
+                                current_decoded = []
+                                for p in current_pred:
+                                    current_decoded.append(tokenizer.decode(p).strip().split()[0])
+                                all_pred.append(current_decoded)
+                                id_loop += 1
+                        except IndexError:
+                            for _ in now_pred[id_loop:]:
+                                current_decoded = ['<SPACE>' for _ in range(10)]
+                                all_pred.append(current_decoded)
+                                id_loop += 1
+                        all_gt.append(decode_ids(now_gt).strip())
+                    now_gt = [y]
+                    now_pred = [pred[i - 1]]
+                    try:
+                        for current_pred in now_pred:
+                            current_decoded = []
+                            for p in current_pred:
+                                current_decoded.append(tokenizer.decode(p).strip().split()[0])
+                            all_pred.append(current_decoded)
+                    except IndexError:
+                        current_decoded = ['<SPACE>' for _ in range(10)]
+                        all_pred.append(current_decoded)
+                    all_gt.append(decode_ids(now_gt).strip())
+                    now_gt = []
+                    now_pred = []
+                    continue
                 now_gt.append(y)
                 now_pred.append(pred[i - 1])
+        """
+
+        print(len(all_gt), len(all_pred))
         assert len(all_pred) == len(all_gt)
 
-        total_pred.extend(all_pred)
-        total_gt.extend(all_gt)
-
         for x, y in zip(all_pred, all_gt):
-            if x == y:
-                acc += 1
-            ratio += difflib.SequenceMatcher(None, x, y).ratio() * 100
+            if y in x[:1]:
+                pass_1 += 1
+                pass_5 += 1
+                pass_10 += 1
+            elif y in x[1:5]:
+                pass_5 += 1
+                pass_10 += 1
+            elif y in x[5:]:
+                pass_10 += 1
             n_test += 1
 
-    if n_test != 0:
-        acc = round(acc / n_test, 4)
-        ratio = round(ratio / n_test, 2)
-    print(acc, ratio, n_test)
+        progress_bar.update(1)
+        progress_bar.set_description(f'Number of test: {n_test}')
+        break
 
+    print(f'Pass@1: {round(pass_1 / n_test, 3)}')
+    print(f'Pass@5: {round(pass_5 / n_test, 3)}')
+    print(f'Pass@10: {round(pass_10 / n_test, 3)}')
+
+
+"""
+
+def tokenize_function(cfg, tokenizer, example):
+    return tokenizer(
+        example['source_code'],
+        padding=True,
+        truncation=True,
+        max_length=tokenizer.model_max_length,
+        return_attention_mask=False,
+        return_special_tokens_mask=False
+    )
 
 def get_test_samples(example):
     samples = []
@@ -190,7 +224,7 @@ def get_test_samples(example):
     return samples
 
 
-def evaluate_api_generation(cfg: omegaconf.DictConfig,
+def evaluate_api_completion(cfg: omegaconf.DictConfig,
                             accelerator: accelerate.Accelerator,
                             model: transformers.AutoModelForCausalLM,
                             tokenizer: transformers.AutoTokenizer,
@@ -280,3 +314,4 @@ def evaluate_api_generation(cfg: omegaconf.DictConfig,
 
     logger.info(f'API init accuracy: {round(api_inits_accuracy / api_inits_n_samples, 4)} - # test samples: {api_inits_n_samples}')
     logger.info(f'API calls accuracy: {round(api_calls_accuracy / api_calls_n_samples, 4)} - # test samples: {api_calls_n_samples}')
+"""

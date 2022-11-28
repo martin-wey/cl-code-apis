@@ -1,19 +1,17 @@
 ---
 defaults:
   - _self_
-  - run: clm_pretraining
+  - run: code_completion
   - model: code-gpt2-small
   - wandb: default
   - hydra: default
 
 run:
-  run_name: clm_pretraining
-  push_to_hub: true
+  run_name: test_code_completion
   # leave base_path to null
   base_path: null
   preprocessing_num_workers: 16
   seed: 42
 
 device: cuda
-parallel: False
 use_wandb: False

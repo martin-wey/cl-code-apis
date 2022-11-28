@@ -132,3 +132,4 @@ outputs/
 clustering/
 data/
 /cedar_gpu_node_pretraining_job.sh
+/cedar_gpu_node_pretraining_job2.sh
