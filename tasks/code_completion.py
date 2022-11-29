@@ -1,15 +1,57 @@
-from itertools import chain
 import logging
+import multiprocessing
+from itertools import chain, repeat
 
 import datasets
 import omegaconf
+import pandas as pd
 import torch
 import transformers
+from datasets import Dataset
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import default_data_collator
 
 logger = logging.getLogger(__name__)
+
+
+def get_test_samples(tokenizer, example):
+    samples = []
+    # split api usages
+    api_usages = list(filter(lambda e: e != '', example['api_seq'].split('|')))
+    api_usages = [u.split('.') for u in api_usages]
+    # remove java wildcards (e.g., ArrayList<String> -> ArrayList)
+    #   and get a list of api usage in the form of [api_class, api_call, index_in_source_code]
+    api_usages = list(map(lambda e: [e[0].strip().split(' ')[0],
+                                     e[1].strip().split(' ')[0],
+                                     e[1].strip().split(' ')[1]], api_usages))
+
+    for usage in api_usages:
+        try:
+            end_idx = int(usage[2])  # each API usage gives the index of the call site in the `source_code` field
+            sample_input_ids = tokenizer(example['source_code'][:end_idx])['input_ids']
+
+            # ignore samples not fitting into the models and API initializations
+            max_length = tokenizer.model_max_length if tokenizer.model_max_length <= 1024 else 1024
+            if len(sample_input_ids) >= max_length or usage[1] == '<init>':
+                continue
+
+            new_sample = {
+                'source_code': example['source_code'][:end_idx],
+                'domain': example['domain'],
+                'api': example['api'],
+                'ground_truth': f'{usage[0]}.{usage[1]}'
+            }
+            samples.append(new_sample)
+        except:
+            # some `api_seq` may be ill-formed, ignore them
+            pass
+    return samples
+
+
+def add_item(dataset, item):
+    dataset = dataset.add_item(item)
+    return dataset
 
 
 def evaluate_token_completion(cfg: omegaconf.DictConfig,
@@ -42,7 +84,7 @@ def evaluate_token_completion(cfg: omegaconf.DictConfig,
             k: [t[i: i + block_size] for i in range(0, total_length, block_size)]
             for k, t in concatenated_examples.items()
         }
-        if cfg.run.task == 'clm':
+        if cfg.model.model_type == 'decoder':
             result['labels'] = result['input_ids'].copy()
         return result
 
@@ -156,51 +198,25 @@ def evaluate_api_completion(cfg: omegaconf.DictConfig,
     def tokenize_function(tokenizer, example):
         return tokenizer(example['source_code'], return_attention_mask=False)
 
-    def get_test_samples(example):
-        samples = []
-        # split api usages
-        api_usages = list(filter(lambda e: e != '', example['api_seq'].split('|')))
-        api_usages = [u.split('.') for u in api_usages]
-        # remove java wildcards (e.g., ArrayList<String> -> ArrayList)
-        #   and get a list of api usage in the form of [api_class, api_call, index_in_source_code]
-        api_usages = list(map(lambda e: [e[0].strip().split(' ')[0],
-                                         e[1].strip().split(' ')[0],
-                                         e[1].strip().split(' ')[1]], api_usages))
+    # when using ID dataset, these columns are not present
+    if 'domain' not in dataset.column_names and 'api' not in dataset.column_names:
+        domain = ['NaN'] * len(dataset)
+        api = ['NaN'] * len(dataset)
+        dataset = dataset.add_column('domain', domain)
+        dataset = dataset.add_column('api', api)
 
-        for usage in api_usages:
-            end_idx = int(usage[2])  # each API usage gives the index of the call site in the `source_code` field
-
-            sample_input_ids = tokenizer(example['source_code'][:end_idx])['input_ids']
-            if len(sample_input_ids) < tokenizer.model_max_length \
-                    and usage[1] != '<init>':
-                new_sample = {
-                    'source_code': example['source_code'][:end_idx],
-                    # 'domain': example['domain'],
-                    # 'api': example['api'],
-                    'api_seq': '',
-                    'is_test_sample': True,
-                    'ground_truth': f'{usage[0]}.{usage[1]}'
-                }
-                samples.append(new_sample)
-        return samples
-
+    # remove useless columns
     dataset = dataset.remove_columns([name for name in dataset.column_names if name not in
                                       ['source_code', 'domain', 'api', 'api_seq']])
 
-    # add a column to determine whether a sample should be included in the test set
-    #   we create the new test samples according to the API location in the `source_code` field.
-    is_test_sample = [False] * len(dataset)
-    ground_truth = [None] * len(dataset)
-    dataset = dataset.add_column('is_test_sample', is_test_sample)
-    dataset = dataset.add_column('ground_truth', ground_truth)
+    # for test purpose: @todo: remove this line
     dataset = dataset.select(list(range(100)))
 
-    logger.info('Generating test samples.')
-    for sample in tqdm(dataset):
-        for new_sample in get_test_samples(sample):
-            dataset = dataset.add_item(new_sample)
-    # remove non-test samples and too long samples for the model
-    dataset = dataset.filter(lambda e: e['is_test_sample'])
+    logger.info("Generating test samples.")
+    with multiprocessing.Pool(cfg.run.preprocessing_num_workers) as pool:
+        results = list(tqdm(pool.starmap(get_test_samples, zip(repeat(tokenizer), iter(dataset)))))
+    results = [item for sublist in results for item in sublist]
+    dataset = Dataset.from_pandas(pd.DataFrame(results))
 
     dataset_tokenized = dataset.map(
         lambda e: tokenize_function(tokenizer, e),
@@ -223,7 +239,7 @@ def evaluate_api_completion(cfg: omegaconf.DictConfig,
     model.eval()
     for step, sample in enumerate(tqdm(dataloader, desc='Validation')):
         with torch.no_grad():
-            try:
+            if sample['input_ids'].shape[1] != 0:
                 generated_tokens = model.generate(
                     sample['input_ids'].to(cfg.device),
                     max_new_tokens=1,
@@ -260,27 +276,34 @@ def evaluate_api_completion(cfg: omegaconf.DictConfig,
                 elif ground_truth_call in predictions_topk[5:]:
                     results[ground_truth_api][ground_truth_call]['pass@10'] += 1
 
-                # add test sample
+                # increment n test samples
                 results[ground_truth_api][ground_truth_call]['n_test'] += 1
-                # store ground-truth and prediction for further analysis
-                ground_truths.append(dataset_tokenized[step]['ground_truth'])
-                predictions.append(predictions_topk)
-            except:
-                print('error')
 
-    pass_1 = 0
-    pass_5 = 0
-    pass_10 = 0
+                # store ground-truth and prediction
+                ground_truths.append(f'{dataset_tokenized[step]["domain"]} '
+                                     f'{dataset_tokenized[step]["api"]} '
+                                     f'{dataset_tokenized[step]["ground_truth"]}')
+                predictions.append(' '.join(predictions_topk))
+
+    pass_1 = 0.0
+    pass_5 = 0.0
+    pass_10 = 0.0
     all_tests = 0
 
     for api, items in results.items():
         for pred, metrics in items.items():
-            pass_1 += (metrics['pass@1'] / metrics['n_test'])
-            pass_5 += (metrics['pass@5'] / metrics['n_test'])
-            pass_10 += (metrics['pass@10'] / metrics['n_test'])
+            pass_1 += metrics['pass@1']
+            pass_5 += metrics['pass@5']
+            pass_10 += metrics['pass@10']
             all_tests += metrics['n_test']
 
     logger.info(f'Number of test calls: {all_tests}')
-    logger.info(f'Pass@1: {round(pass_1, 3)}')
-    logger.info(f'Pass@5: {round(pass_5, 3)}')
-    logger.info(f'Pass@10: {round(pass_10, 3)}')
+    logger.info(f'Pass@1: {round(pass_1 / all_tests, 3)}')
+    logger.info(f'Pass@5: {round(pass_5 / all_tests, 3)}')
+    logger.info(f'Pass@10: {round(pass_10 / all_tests, 3)}')
+
+    logger.info("Exporting predictions and ground truth files...")
+    with open('predictions.txt', 'w+') as f1, open('gt.txt', 'w+') as f2:
+        for pred, gt in zip(predictions, ground_truths):
+            f1.write(pred + '\n')
+            f2.write(gt + '\n')

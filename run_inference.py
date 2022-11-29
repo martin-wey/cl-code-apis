@@ -31,23 +31,28 @@ def main(cfg: omegaconf.DictConfig):
     # hydra changes the current working dir, so we have to keep in memory the base path of the project
     cfg.run.base_path = hydra.utils.get_original_cwd()
 
-    logger.info(f"Loading pre-trained model from checkpoint ({cfg.model.model_name_or_path}).")
     config_path = os.path.join(cfg.run.base_path, cfg.model.model_config_path)
     model_path = os.path.join(cfg.run.base_path, cfg.model.model_name_or_path)
     tokenizer_path = os.path.join(cfg.run.base_path, cfg.model.tokenizer_name_or_path)
 
     config_cls, model_cls, tokenizer_cls = MODEL_CLS[cfg.model.model_type]
-
-    config = config_cls.from_pretrained(config_path)
-    model = model_cls.from_pretrained(model_path, config=config)
-    tokenizer = model_cls.from_pretrained(tokenizer_path, use_fast=True)
+    try:
+        logger.info(f"Attempting to load pre-trained model from local checkpoint ({cfg.model.model_name_or_path}).")
+        config = config_cls.from_pretrained(config_path)
+        model = model_cls.from_pretrained(model_path, config=config)
+        tokenizer = tokenizer_cls.from_pretrained(tokenizer_path, use_fast=True)
+    except:
+        logger.info(f"Loading pre-trained model from hub ({cfg.model.model_name_or_path}).")
+        model = model_cls.from_pretrained(cfg.model.model_name_or_path)
+        tokenizer = tokenizer_cls.from_pretrained(cfg.model.model_name_or_path)
     model.to(cfg.device)
     # for inference only
     tokenizer.pad_token = tokenizer.eos_token
     model.config.pad_token_id = model.config.eos_token_id
 
     logger.info(f"Loading test dataset: ({cfg.run.dataset_name}).")
-    dataset = load_dataset(cfg.run.dataset_name, split='train[:5%]')
+    # for test purpose: select 5%, @todo: remove this
+    dataset = load_dataset(cfg.run.dataset_name, split='train[:5%]', use_auth_token=True)
     dataset = dataset.remove_columns(['repo_name', 'method_path', 'method_name', 'docstring'])
 
     if cfg.run.evaluate == 'perplexity':
@@ -57,6 +62,7 @@ def main(cfg: omegaconf.DictConfig):
     elif cfg.run.evaluate == 'token_completion':
         evaluate_token_completion(cfg, model, tokenizer, dataset)
     elif cfg.run.evaluate == 'api_completion':
+        cfg.run.batch_size = 1
         evaluate_api_completion(cfg, model, tokenizer, dataset)
     elif cfg.run.evaluate == 'api_prediction':
         pass
