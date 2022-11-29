@@ -1,3 +1,0 @@
----
-run:
-  dir: run_outputs/${run.run_name}_${model.model_name}

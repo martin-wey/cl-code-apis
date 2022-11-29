@@ -1,14 +1,12 @@
 ---
 defaults:
   - _self_
-  - run: code_completion
+  - run: inference
   - model: code-gpt2-small
   - wandb: default
-  - hydra: default
+  - hydra: output_inference
 
 run:
-  run_name: test_code_completion
-  # leave base_path to null
   base_path: null
   preprocessing_num_workers: 16
   seed: 42

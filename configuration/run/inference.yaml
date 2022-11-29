@@ -1,0 +1,9 @@
+---
+task_id: 0
+experiment: zero-shot         # zero-shot, naive, ...
+evaluate: token_completion    # token_completion | api_completion | api_prediction | perplexity
+
+# dataset name for loading from HF hub
+dataset_name: martiwey/gh-java-methods-small-ood
+
+batch_size: 16

@@ -23,6 +23,11 @@ from tasks import pretraining
 
 logger = get_logger(__name__)
 
+MODEL_CLS = {
+    'encoder': (AutoConfig, AutoModelForMaskedLM, AutoTokenizer),
+    'decoder': (AutoConfig, AutoModelForCausalLM, AutoTokenizer)
+}
+
 
 @hydra.main(config_path='configuration', config_name='defaults', version_base='1.1')
 def main(cfg: omegaconf.DictConfig):
@@ -57,6 +62,8 @@ def main(cfg: omegaconf.DictConfig):
             "before initiating/continuing model pretraining."
         )
 
+    config_cls, model_cls, tokenizer_cls = MODEL_CLS[cfg.model.model_type]
+
     if cfg.model.model_name_or_path is None:
         # instantiating a new model from scratch
         if cfg.model.model_config_path is None:
@@ -65,23 +72,17 @@ def main(cfg: omegaconf.DictConfig):
                 "a new model from scratch."
             )
         config_path = os.path.join(cfg.run.base_path, cfg.model.model_config_path)
-        config = AutoConfig.from_pretrained(config_path)
+        config = config_cls.from_pretrained(config_path)
 
         tokenizer_path = os.path.join(cfg.run.base_path, cfg.model.tokenizer_name_or_path)
-        tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, use_fast=True)
-        if cfg.run.task == 'clm':
-            model = AutoModelForCausalLM.from_config(config)
-        elif cfg.run.task == 'mlm':
-            model = AutoModelForMaskedLM.from_config(config)
+        tokenizer = tokenizer_cls.from_pretrained(tokenizer_path, use_fast=True)
+        model = model_cls.from_config(config)
     else:
         # loading model from checkpoint or HF hub
         logger.info(f"Loading pre-trained model from checkpoint ({cfg.model.model_name_or_path}).")
-        if cfg.run.task == 'clm':
-            model = AutoModelForCausalLM.from_pretrained(cfg.model.model_name_or_path)
-        elif cfg.run.task == 'mlm':
-            model = AutoModelForMaskedLM.from_pretrained(cfg.model.model_name_or_path)
+        model = model_cls.from_pretrained(cfg.model.model_name_or_path)
         tokenizer_path = os.path.join(cfg.run.base_path, cfg.model.tokenizer_name_or_path)
-        tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, use_fast=True)
+        tokenizer = tokenizer_cls.from_pretrained(tokenizer_path, use_fast=True)
 
     model_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.info(f"Training a new model from scratch (# parameters: {model_params})")
@@ -98,7 +99,7 @@ def main(cfg: omegaconf.DictConfig):
         [cname for cname in valid_dataset.column_names if cname != 'source_code'])
 
     def tokenize_function(examples):
-        if cfg.run.task == 'mlm':
+        if cfg.model.model_type == 'encoder':
             return tokenizer(examples['source_code'], return_special_tokens_mask=True)
         return tokenizer(examples['source_code'])
 
@@ -135,7 +136,7 @@ def main(cfg: omegaconf.DictConfig):
             k: [t[i: i + block_size] for i in range(0, total_length, block_size)]
             for k, t in concatenated_examples.items()
         }
-        if cfg.run.task == 'clm':
+        if cfg.model.model_type == 'decoder':
             result['labels'] = result['input_ids'].copy()
         return result
 
@@ -155,7 +156,7 @@ def main(cfg: omegaconf.DictConfig):
             desc=f"Grouping texts in chunks of {block_size}",
         )
 
-    if cfg.run.task == 'clm':
+    if cfg.model.model_type == 'encoder':
         data_collator = default_data_collator
     else:
         data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm_probability=cfg.run.mlm_probability)

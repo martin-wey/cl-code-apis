@@ -1,6 +1,4 @@
 ---
-task: clm
-
 # dataset names for loading from HF hub
 train_dataset_name: martiwey/gh-java-methods-small-id-train
 valid_dataset_name: martiwey/gh-java-methods-small-id-valid
@@ -22,3 +20,4 @@ seq_length: 1024
 save_checkpoint_steps: 10000
 logging_steps: 50
 resume_from_checkpoint: null
+mlm_probability: 0.15

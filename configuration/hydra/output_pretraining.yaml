@@ -1,0 +1,3 @@
+---
+run:
+  dir: run_outputs/${run.task}_${model.model_name}

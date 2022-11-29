@@ -1,6 +1,6 @@
 """
 Pre-training a GPT-like model for causal language modeling or
-             a BERT-like model for masked language modeling.
+             a RoBERTa-like model for masked language modeling.
 """
 import math
 
@@ -49,15 +49,15 @@ def train(cfg: omegaconf.DictConfig,
           train_dataloader: torch.utils.data.DataLoader,
           valid_dataloader: torch.utils.data.DataLoader,
           valid_dataset: torch.utils.data.Dataset) -> None:
-    no_decay = ["bias", "LayerNorm.weight"]
+    no_decay = ['bias', 'LayerNorm.weight']
     optimizer_grouped_parameters = [
         {
-            "params": [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
-            "weight_decay": cfg.run.weight_decay,
+            'params': [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
+            'weight_decay': cfg.run.weight_decay,
         },
         {
-            "params": [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)],
-            "weight_decay": 0.0,
+            'params': [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)],
+            'weight_decay': 0.0,
         },
     ]
     optimizer = AdamW(optimizer_grouped_parameters, lr=cfg.run.learning_rate)
