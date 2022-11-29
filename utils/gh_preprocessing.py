@@ -1,3 +1,11 @@
+"""
+Preprocessing a dataset.
+    - Deduplication using hash.
+    - Removing samples with more than 250 lines of code.
+
+Adapted from: https://huggingface.co/datasets/codeparrot/github-code/blob/main/github_preprocessing.py
+"""
+
 import hashlib
 import os
 import re

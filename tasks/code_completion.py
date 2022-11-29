@@ -25,7 +25,7 @@ def evaluate_token_completion(cfg: omegaconf.DictConfig,
         num_proc=cfg.run.preprocessing_num_workers,
         load_from_cache_file=True,
         remove_columns=[name for name in dataset.column_names if name != 'input_ids'],
-        desc="Running tokenizer on train dataset.",
+        desc="Running tokenizer on test dataset.",
     )
     block_size = tokenizer.model_max_length
 

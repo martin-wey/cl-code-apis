@@ -5,6 +5,3 @@ model_type: decoder
 
 model_name_or_path: null
 tokenizer_name_or_path: ./data/bpe_tokenizer
-
-# Huggingface repo to sync
-repo_name: martiwey/code-gpt2-small

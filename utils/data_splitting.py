@@ -1,7 +1,7 @@
 """
 Splitting preprocessed data into in-distribution and out-of-distribution datasets.
 
-OOD data: samples using at least one of the target APIs -> fine-tuning.
+OOD data: samples using at least one of the target APIs -> continual fine-tuning.
 ID data: rest of the samples -> pre-training & fine-tuning.
 """
 import argparse

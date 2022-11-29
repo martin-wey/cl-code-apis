@@ -4,4 +4,4 @@ model_config_path: ./configuration/model/code-roberta-base_config.json
 model_type: encoder
 
 model_name_or_path: null
-tokenizer_name_or_path: .data/bpe_tokenizer
+tokenizer_name_or_path: ./data/bpe_tokenizer
