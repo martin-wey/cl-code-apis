@@ -1,6 +1,6 @@
 import logging
 import multiprocessing
-from itertools import chain, repeat
+from itertools import chain
 
 import datasets
 import omegaconf
@@ -15,7 +15,7 @@ from transformers import default_data_collator
 logger = logging.getLogger(__name__)
 
 
-def get_test_samples(tokenizer, example):
+def get_test_samples(example):
     samples = []
     # split api usages
     api_usages = list(filter(lambda e: e != '', example['api_seq'].split('|')))
@@ -28,14 +28,8 @@ def get_test_samples(tokenizer, example):
 
     for usage in api_usages:
         try:
-            end_idx = int(usage[2])  # each API usage gives the index of the call site in the `source_code` field
-            sample_input_ids = tokenizer(example['source_code'][:end_idx])['input_ids']
-
-            # ignore samples not fitting into the models and API initializations
-            max_length = tokenizer.model_max_length if tokenizer.model_max_length <= 1024 else 1024
-            if len(sample_input_ids) >= max_length or usage[1] == '<init>':
-                continue
-
+            # each API usage gives the index of the call site in the `source_code` field
+            end_idx = int(usage[2])
             new_sample = {
                 'source_code': example['source_code'][:end_idx],
                 'domain': example['domain'],
@@ -43,9 +37,7 @@ def get_test_samples(tokenizer, example):
                 'ground_truth': f'{usage[0]}.{usage[1]}'
             }
             samples.append(new_sample)
-        except:
-            # some `api_seq` may be ill-formed, ignore them
-            pass
+        except: pass
     return samples
 
 
@@ -69,7 +61,8 @@ def evaluate_token_completion(cfg: omegaconf.DictConfig,
         remove_columns=[name for name in dataset.column_names if name != 'input_ids'],
         desc="Running tokenizer on test dataset.",
     )
-    block_size = tokenizer.model_max_length
+
+    block_size = tokenizer.model_max_length if tokenizer.model_max_length <= 1024 else 1024
 
     def group_texts(examples):
         # Concatenate all texts.
@@ -214,7 +207,7 @@ def evaluate_api_completion(cfg: omegaconf.DictConfig,
 
     logger.info("Generating test samples.")
     with multiprocessing.Pool(cfg.run.preprocessing_num_workers) as pool:
-        results = list(tqdm(pool.starmap(get_test_samples, zip(repeat(tokenizer), iter(dataset)))))
+        results = list(tqdm(pool.map(get_test_samples, iter(dataset))))
     results = [item for sublist in results for item in sublist]
     dataset = Dataset.from_pandas(pd.DataFrame(results))
 
@@ -237,17 +230,21 @@ def evaluate_api_completion(cfg: omegaconf.DictConfig,
     predictions = []
 
     model.eval()
+    model_max_length = tokenizer.model_max_length if tokenizer.model_max_length <= 1024 else 1024
+
     for step, sample in enumerate(tqdm(dataloader, desc='Validation')):
         with torch.no_grad():
             if sample['input_ids'].shape[1] != 0:
+                input_ids_len = len(sample['input_ids'].squeeze())
+
+                # avoid sample truncation which would result in losing test samples
+                context = sample['input_ids'][:, max(0, (input_ids_len - model_max_length)):input_ids_len]
                 generated_tokens = model.generate(
-                    sample['input_ids'].to(cfg.device),
+                    context.to(cfg.device),
                     max_new_tokens=1,
                     do_sample=True,
                     num_return_sequences=10
                 )
-
-                input_ids_len = len(sample['input_ids'].squeeze())
                 predictions_topk = tokenizer.batch_decode(generated_tokens[:, input_ids_len:], skip_special_tokens=True)
 
                 ground_truth_splitted = dataset_tokenized[step]['ground_truth'].split('.')
@@ -265,15 +262,17 @@ def evaluate_api_completion(cfg: omegaconf.DictConfig,
                         'n_test': 0
                     }
 
-                if ground_truth_call in predictions_topk[:1]:
+                ground_truth = ground_truth_api if ground_truth_call == '<init>' else ground_truth_call
+
+                if ground_truth in predictions_topk[:1]:
                     # add correctly predicted test sample
                     results[ground_truth_api][ground_truth_call]['pass@1'] += 1
                     results[ground_truth_api][ground_truth_call]['pass@5'] += 1
                     results[ground_truth_api][ground_truth_call]['pass@10'] += 1
-                elif ground_truth_call in predictions_topk[1:5]:
+                elif ground_truth in predictions_topk[1:5]:
                     results[ground_truth_api][ground_truth_call]['pass@5'] += 1
                     results[ground_truth_api][ground_truth_call]['pass@10'] += 1
-                elif ground_truth_call in predictions_topk[5:]:
+                elif ground_truth in predictions_topk[5:]:
                     results[ground_truth_api][ground_truth_call]['pass@10'] += 1
 
                 # increment n test samples
