@@ -1,9 +1,15 @@
 ---
-task_id: 0
 experiment: zero-shot         # zero-shot, naive, ...
-evaluate: token_completion    # token_completion | api_completion | api_prediction | perplexity
+evaluate: token_completion    # token_completion | api_usage_completion | api_completion | api_prediction | perplexity
 
 # dataset name for loading from HF hub
-dataset_name: martiwey/gh-java-methods-small-ood-test
+hf_user: martiwey
+dataset_name: gh-java-methods-small-ood-test
+domain: all
+
+# max token generated for the api_usage_completion task
+max_length: 30
+num_beams: 10
+do_sample: true
 
 batch_size: 16

@@ -14,7 +14,7 @@ def evaluate_perplexity(cfg: omegaconf.DictConfig,
                         tokenizer: transformers.AutoTokenizer,
                         dataset: datasets.Dataset):
     def tokenize_function(examples):
-        if cfg.run.task == 'mlm':
+        if cfg.model.model_type == 'encoder':
             return tokenizer(examples['source_code'], return_special_tokens_mask=True)
         return tokenizer(examples['source_code'])
 
@@ -23,7 +23,7 @@ def evaluate_perplexity(cfg: omegaconf.DictConfig,
         batched=True,
         num_proc=cfg.run.preprocessing_num_workers,
         load_from_cache_file=True,
-        remove_columns=['source_code', 'api_seq', 'domain', 'api'],
+        remove_columns=[cname for cname in dataset.column_names if cname not in ['input_ids', 'attention_mask']],
         desc="Running tokenizer on train dataset.",
     )
     block_size = tokenizer.model_max_length
@@ -41,7 +41,7 @@ def evaluate_perplexity(cfg: omegaconf.DictConfig,
             k: [t[i: i + block_size] for i in range(0, total_length, block_size)]
             for k, t in concatenated_examples.items()
         }
-        if cfg.run.task == 'clm':
+        if cfg.model.model_type == 'decoder':
             result['labels'] = result['input_ids'].copy()
         return result
 
@@ -62,13 +62,13 @@ def evaluate_perplexity(cfg: omegaconf.DictConfig,
     losses = []
     for step, batch in enumerate(tqdm(dataloader)):
         with torch.no_grad():
-            outputs = model(**batch)
+            outputs = model(input_ids=batch['input_ids'].to(cfg.device),
+                            labels=batch['labels'].to(cfg.device))
             loss = outputs.loss
-            losses.append(loss)
-    loss = torch.cat(losses)
+            losses.append(loss.item())
     try:
         loss = torch.mean(loss)
         perplexity = torch.exp(loss)
     except OverflowError:
-        perplexity = float("inf")
+        perplexity = float('inf')
     return loss.item(), perplexity.item()

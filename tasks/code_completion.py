@@ -12,10 +12,12 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import default_data_collator
 
+from utils.jdk_apis import JDK_APIS
+
 logger = logging.getLogger(__name__)
 
 
-def get_test_samples(example):
+def get_api_completion_test_samples(example):
     samples = []
     # split api usages
     api_usages = list(filter(lambda e: e != '', example['api_seq'].split('|')))
@@ -28,16 +30,103 @@ def get_test_samples(example):
 
     for usage in api_usages:
         try:
+            # ignore API initialization samples
+            if usage[1] == '<init>':
+                continue
+
+            ground_truth = f'{usage[0]}.{usage[1]}'
+
+            # ignore API calls not part of JDK when testing on ID dataset
+            if example['api'] == 'NaN' and ground_truth not in JDK_APIS:
+                continue
+
+            api_usage_idx = int(usage[2])
+            api_init_or_call = usage[1]
+            api_init_or_call_in_code = example['source_code'][api_usage_idx:api_usage_idx + len(api_init_or_call)]
+            # ensure the usage and the source code match
+            if api_init_or_call != api_init_or_call_in_code:
+                continue
+
+            # for OOD data, ignore APIs that are not OOD
+            if example['api'] != 'NaN' and usage[0] != example['api']:
+                continue
+
             # each API usage gives the index of the call site in the `source_code` field
-            end_idx = int(usage[2])
             new_sample = {
-                'source_code': example['source_code'][:end_idx],
+                'source_code': example['source_code'][:api_usage_idx],
                 'domain': example['domain'],
                 'api': example['api'],
-                'ground_truth': f'{usage[0]}.{usage[1]}'
+                'ground_truth': ground_truth
             }
             samples.append(new_sample)
-        except: pass
+        except:
+            pass
+    return samples
+
+
+def get_api_usage_completion_test_samples(example):
+    samples = []
+    # split api usages
+    api_usages = list(filter(lambda e: e != '', example['api_seq'].split('|')))
+    api_usages = [u.split('.') for u in api_usages]
+    # remove java wildcards (e.g., ArrayList<String> -> ArrayList)
+    #   and get a list of api usage in the form of [api_class, api_call, index_in_source_code]
+    api_usages = list(map(lambda e: [e[0].strip().split(' ')[0],
+                                     e[1].strip().split(' ')[0],
+                                     e[1].strip().split(' ')[1]], api_usages))
+
+    for usage in api_usages:
+        try:
+            # ignore API initialization statements
+            if usage[1] == '<init>':
+                continue
+
+            # for OOD data, ignore APIs that are not OOD
+            if example['api'] != 'NaN' and usage[0] != example['api']:
+                continue
+
+            api_usage_idx = int(usage[2])
+            api_interface = usage[0]
+            api_call = usage[1]
+            api_call_in_code = example['source_code'][api_usage_idx:api_usage_idx + len(api_call)]
+            # ensure the usage and the source code match
+            if api_call != api_call_in_code:
+                continue
+
+            api_interface_start_idx = api_usage_idx - (len(api_interface) + 1)  # +1 for the dot between API and call
+            api_interface_in_code = example['source_code'][
+                                    api_interface_start_idx:api_interface_start_idx + len(api_interface)]
+            # case <API>.<call>(<params>) -> we keep <API>. in the ground-truth.
+            if api_interface == api_interface_in_code:
+                start_token_idx = api_interface_start_idx
+                end_token_idx = start_token_idx + len(api_interface) + 1 + len(api_call)
+            # case <var>.<call>(<params>) -> we ignore <var> in the ground-truth.
+            else:
+                start_token_idx = api_usage_idx
+                end_token_idx = start_token_idx + len(api_call)
+
+            open_parenthesis = 0
+            while True:
+                next_token = example['source_code'][end_token_idx:end_token_idx + 1]
+                if next_token == ')':
+                    open_parenthesis -= 1
+                elif next_token == '(':
+                    open_parenthesis += 1
+                end_token_idx += 1
+                if open_parenthesis == 0:
+                    break
+
+            new_sample = {
+                'context': example['source_code'][:start_token_idx],
+                'ground_truth': example['source_code'][start_token_idx:end_token_idx],
+                'ground_truth_api': api_interface,
+                'domain': example['domain'],
+                'api': example['api']
+            }
+            samples.append(new_sample)
+        except:
+            pass
+
     return samples
 
 
@@ -181,7 +270,7 @@ def evaluate_token_completion(cfg: omegaconf.DictConfig,
                         correct += 1
                         progress_bar.set_description(f'acc: {round(correct / total, 3)}')
         progress_bar.update(1)
-    logger.info(f'Accuracy on {total} samples: {round(correct / total, 3)}')
+    return total, correct
 
 
 def evaluate_api_completion(cfg: omegaconf.DictConfig,
@@ -202,12 +291,9 @@ def evaluate_api_completion(cfg: omegaconf.DictConfig,
     dataset = dataset.remove_columns([name for name in dataset.column_names if name not in
                                       ['source_code', 'domain', 'api', 'api_seq']])
 
-    # for test purpose: @todo: remove this line
-    dataset = dataset.select(list(range(100)))
-
     logger.info("Generating test samples.")
     with multiprocessing.Pool(cfg.run.preprocessing_num_workers) as pool:
-        results = list(tqdm(pool.map(get_test_samples, iter(dataset))))
+        results = list(tqdm(pool.map(get_api_completion_test_samples, iter(dataset))))
     results = [item for sublist in results for item in sublist]
     dataset = Dataset.from_pandas(pd.DataFrame(results))
 
@@ -284,25 +370,123 @@ def evaluate_api_completion(cfg: omegaconf.DictConfig,
                                      f'{dataset_tokenized[step]["ground_truth"]}')
                 predictions.append(' '.join(predictions_topk))
 
+    logger.info("Exporting predictions and ground truth files...")
+    with open('predictions.txt', 'w+') as f1, open('gt.txt', 'w+') as f2:
+        for pred, gt in zip(predictions, ground_truths):
+            f1.write(pred + '\n')
+            f2.write(gt + '\n')
+
     pass_1 = 0.0
     pass_5 = 0.0
     pass_10 = 0.0
     all_tests = 0
-
     for api, items in results.items():
         for pred, metrics in items.items():
             pass_1 += metrics['pass@1']
             pass_5 += metrics['pass@5']
             pass_10 += metrics['pass@10']
             all_tests += metrics['n_test']
+    return all_tests, pass_1, pass_5, pass_10
 
-    logger.info(f'Number of test calls: {all_tests}')
-    logger.info(f'Pass@1: {round(pass_1 / all_tests, 3)}')
-    logger.info(f'Pass@5: {round(pass_5 / all_tests, 3)}')
-    logger.info(f'Pass@10: {round(pass_10 / all_tests, 3)}')
+
+def evaluate_api_usage_completion(cfg: omegaconf.DictConfig,
+                                  model: transformers.AutoModelForCausalLM,
+                                  tokenizer: transformers.AutoTokenizer,
+                                  dataset: datasets.Dataset):
+    def tokenize_function(tokenizer, example):
+        return tokenizer(example['context'], return_attention_mask=False)
+
+    def decode_ids(idxs):
+        codes = ''
+        for i, idx in enumerate(idxs):
+            to_add = tokenizer.convert_ids_to_tokens(idx)
+
+            # Ċ = new line
+            if to_add.startswith('Ċ'):
+                codes += ' '
+                if i > 0:
+                    break
+                else:
+                    continue
+
+            if tokenizer.convert_ids_to_tokens(idx)[0] == '\u0120':
+                if not codes.endswith(' '):
+                    codes += ' ' + to_add[1:]
+                else:
+                    codes += to_add[1:]
+            elif idx in [tokenizer.bos_token_id, tokenizer.eos_token_id, tokenizer.sep_token_id,
+                         tokenizer.pad_token_id]:
+                codes += ' ' + to_add + ' '
+            else:
+                codes += to_add
+        return codes.strip(' ')
+
+    # when using ID dataset, these columns are not present
+    if 'domain' not in dataset.column_names and 'api' not in dataset.column_names:
+        domain = ['NaN'] * len(dataset)
+        api = ['NaN'] * len(dataset)
+        dataset = dataset.add_column('domain', domain)
+        dataset = dataset.add_column('api', api)
+
+    # remove useless columns
+    dataset = dataset.remove_columns([name for name in dataset.column_names if name not in
+                                      ['source_code', 'domain', 'api', 'api_seq']])
+
+    logger.info("Generating test samples.")
+    with multiprocessing.Pool(cfg.run.preprocessing_num_workers) as pool:
+        results = list(tqdm(pool.map(get_api_usage_completion_test_samples, iter(dataset))))
+    results = [item for sublist in results for item in sublist]
+    dataset = Dataset.from_pandas(pd.DataFrame(results))
+
+    # filter API usage statements that are too long to generate
+    dataset = dataset.filter(lambda e: len(tokenizer(e['ground_truth']).input_ids) <= cfg.run.max_length)
+
+    dataset_tokenized = dataset.map(
+        lambda e: tokenize_function(tokenizer, e),
+        batched=True,
+        num_proc=cfg.run.preprocessing_num_workers,
+        load_from_cache_file=True,
+        remove_columns=[cname for cname in dataset.column_names if cname != 'input_ids'],
+        desc="Running tokenizer on test samples",
+    )
+    dataloader = DataLoader(
+        dataset_tokenized.select(list(range(500))),
+        collate_fn=default_data_collator,
+        batch_size=cfg.run.batch_size
+    )
+
+    model.eval()
+    model_max_length = tokenizer.model_max_length if tokenizer.model_max_length <= 1024 else 1024
+
+    predictions = []
+    ground_truths = []
+    ground_truths_apis = []
+    for step, sample in enumerate(tqdm(dataloader, desc='Validation')):
+        with torch.no_grad():
+            if sample['input_ids'].shape[1] != 0:
+                input_ids_len = len(sample['input_ids'].squeeze())
+                max_context_len = model_max_length - cfg.run.max_length
+
+                # avoid sample truncation which would result in losing test samples
+                context = sample['input_ids'][:, max(0, (input_ids_len - max_context_len)):input_ids_len]
+                generated_tokens = model.generate(
+                    context.to(cfg.device),
+                    max_new_tokens=cfg.run.max_length,
+                    num_beams=cfg.run.num_beams,
+                    do_sample=cfg.run.do_sample,
+                    num_return_sequences=1
+                )
+                generated_tokens = generated_tokens.squeeze()[input_ids_len:]
+                generated_tokens = generated_tokens.cpu().tolist()
+
+                prediction_decoded = decode_ids(generated_tokens)
+                predictions.append(prediction_decoded)
+                ground_truths.append(dataset[step]['ground_truth'])
+                ground_truths_apis.append(dataset[step]['ground_truth_api'].replace('\n', ' '))
 
     logger.info("Exporting predictions and ground truth files...")
-    with open('predictions.txt', 'w+') as f1, open('gt.txt', 'w+') as f2:
-        for pred, gt in zip(predictions, ground_truths):
+    with open('predictions.txt', 'w+') as f1, open('gt.txt', 'w+') as f2,  open('gt_apis.txt', 'w+') as f3:
+        for pred, gt, gt_api in zip(predictions, ground_truths, ground_truths_apis):
             f1.write(pred + '\n')
             f2.write(gt + '\n')
+            f3.write(gt_api + '\n')
