@@ -8,8 +8,10 @@ dataset_name: gh-java-methods-small-ood-test
 domain: all
 
 # max token generated for the api_usage_completion task
-max_length: 30
-num_beams: 10
+max_new_tokens: 30
 do_sample: true
+temperate: 0.2
+top_p: 0.95
+top_k: 0
 
 batch_size: 16
