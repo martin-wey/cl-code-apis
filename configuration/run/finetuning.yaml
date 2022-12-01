@@ -1,0 +1,14 @@
+---
+# dataset name for loading from HF hub
+hf_user: martiwey
+dataset_name: gh-java-methods-small-id-ft-train
+domain: id-all   # id-all | ood-all | ood-general | ood-security | ood-android | ood-web | ood-guava
+
+strategy: full   # full | seq
+
+train_batch_size: 6
+valid_batch_size: 6
+learning_rate: 5e-5
+num_train_epochs: 5
+max_grad_norm: 1.0
+logging_steps: 50

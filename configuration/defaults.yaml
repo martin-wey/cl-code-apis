@@ -1,10 +1,10 @@
 ---
 defaults:
   - _self_
-  - run: inference
+  - run: finetuning
   - model: code-gpt2-small
   - wandb: default
-  - hydra: output_inference
+  - hydra: output_finetuning
 
 run:
   base_path: null

@@ -146,7 +146,6 @@ def get_api_usage_completion_test_samples(example):
                 new_sample = {
                     'context': example['source_code'][:start_token_idx],
                     'ground_truth': example['source_code'][start_token_idx:end_token_idx],
-                    'ground_truth_api': api_interface,
                     'domain': example['domain'],
                     'api': example['api']
                 }
