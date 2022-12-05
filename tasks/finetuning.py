@@ -80,6 +80,7 @@ def get_api_usage_completion_samples(example):
                 end_token_idx += 1
                 n_iter += 1
                 if open_parenthesis == 0 or n_iter > 10000:
+                    # ill-formed case...
                     break
 
             if open_parenthesis == 0:
@@ -97,6 +98,55 @@ def get_api_usage_completion_samples(example):
     return samples
 
 
+def get_api_call_completion_samples(example):
+    samples = []
+    try:
+        # split api usages
+        api_usages = list(filter(lambda e: e != '', example['api_seq'].split('|')))
+        api_usages = [u.split('.') for u in api_usages]
+        # remove java wildcards (e.g., ArrayList<String> -> ArrayList)
+        #   and get a list of api usage in the form of [api_class, api_call, index_in_source_code]
+        api_usages = list(map(lambda e: [e[0].strip().split(' ')[0],
+                                         e[1].strip().split(' ')[0],
+                                         e[1].strip().split(' ')[1]], api_usages))
+    except IndexError:
+        return samples
+
+    for usage in api_usages:
+        try:
+            ground_truth = f'{usage[0]}.{usage[1]}'
+            # ignore API initialization samples
+            if usage[1] == '<init>':
+                continue
+            # ignore API calls not part of JDK when testing on ID dataset
+            if example['api'] == 'NaN' and ground_truth not in JDK_APIS:
+                continue
+            # for OOD data, ignore APIs that are not OOD
+            if example['api'] != 'NaN' and usage[0] != example['api']:
+                continue
+
+            api_call = usage[1]
+            start_token_idx = int(usage[2])
+            end_token_idx = start_token_idx + len(api_call)
+            api_call_in_code = example['source_code'][start_token_idx:end_token_idx]
+
+            # ensure the usage and the source code match
+            if api_call != api_call_in_code:
+                continue
+
+            new_sample = {
+                'source_code': example['source_code'][:end_token_idx],
+                'context': example['source_code'][:start_token_idx],
+                'ground_truth': api_call,
+                'domain': example['domain'],
+                'api': example['api'],
+            }
+            samples.append(new_sample)
+        except:
+            pass
+    return samples
+
+
 def finetune_decoder(cfg: omegaconf.DictConfig,
                      model: transformers.AutoModelForCausalLM,
                      tokenizer: transformers.AutoTokenizer,
@@ -106,7 +156,10 @@ def finetune_decoder(cfg: omegaconf.DictConfig,
 
     logger.info("Generating fine-tuning samples.")
     with multiprocessing.Pool(cfg.run.preprocessing_num_workers) as pool:
-        results = list(tqdm(pool.imap(get_api_usage_completion_samples, iter(dataset)), total=len(dataset)))
+        if cfg.run.task == 'api_usage_completion':
+            results = list(tqdm(pool.imap(get_api_usage_completion_samples, iter(dataset)), total=len(dataset)))
+        else:
+            results = list(tqdm(pool.imap(get_api_call_completion_samples, iter(dataset)), total=len(dataset)))
     results = [item for sublist in results for item in sublist]
     dataset = Dataset.from_pandas(pd.DataFrame(results))
 

@@ -4,7 +4,8 @@ hf_user: martiwey
 dataset_name: gh-java-methods-small-id-ft-train
 domain: id-all   # id-all | ood-all | ood-general | ood-security | ood-android | ood-web | ood-guava
 
-strategy: full   # full | seq
+task: api_completion  # api_completion | api_usage_completion
+strategy: full        # full | seq
 
 train_batch_size: 6
 valid_batch_size: 6
