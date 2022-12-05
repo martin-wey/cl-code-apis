@@ -45,14 +45,16 @@ def main(cfg: omegaconf.DictConfig):
         model = model_cls.from_pretrained(cfg.model.model_name_or_path)
         tokenizer = tokenizer_cls.from_pretrained(cfg.model.model_name_or_path)
     model.to(cfg.device)
-    # for inference only
-    tokenizer.pad_token = tokenizer.eos_token
-    model.config.pad_token_id = model.config.eos_token_id
 
     logger.info(f"Loading fine-tuning dataset: ({cfg.run.dataset_name}).")
     dataset_url = os.path.join(cfg.run.hf_user, cfg.run.dataset_name)
     dataset = load_dataset(dataset_url, split='train', use_auth_token=True)
     dataset = dataset.remove_columns(['repo_name', 'method_path', 'method_name', 'docstring'])
+
+    if 'all' not in cfg.run.domain:
+        domain = cfg.run.domain.split('-')[1]
+        logger.info(f"Filtering dataset to keep sample of domain: `{domain}`")
+        dataset = dataset.filter(lambda e: e['domain'] == domain, num_proc=cfg.run.preprocessing_num_workers)
 
     # when using ID dataset, these columns are not present
     if 'domain' not in dataset.column_names and 'api' not in dataset.column_names:

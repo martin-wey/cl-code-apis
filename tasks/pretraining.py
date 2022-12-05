@@ -88,7 +88,7 @@ def train(cfg: omegaconf.DictConfig,
     for epoch in range(cfg.run.num_train_epochs):
         for step, batch in enumerate(train_dataloader):
             with accelerator.accumulate(model):
-                outputs = model(**batch, use_cache=False)
+                outputs = model(**batch)
                 loss = outputs.loss
                 accelerator.backward(loss)
                 optimizer.step()

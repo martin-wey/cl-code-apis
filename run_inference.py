@@ -82,9 +82,6 @@ def main(cfg: omegaconf.DictConfig):
         logger.info("***** Evaluating API usage completion on input dataset *****")
         cfg.run.batch_size = 1
         evaluate_api_usage_completion(cfg, model, tokenizer, dataset)
-    # API prediction using MLM model
-    elif cfg.run.evaluate == 'api_prediction':
-        pass
     else:
         raise ValueError("Please select an evaluation task "
                          "(perplexity | token_completion | api_completion | api_prediction")

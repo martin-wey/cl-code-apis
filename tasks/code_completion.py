@@ -1,6 +1,5 @@
 import logging
 import multiprocessing
-import re
 from itertools import chain
 
 import datasets

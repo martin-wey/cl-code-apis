@@ -156,7 +156,7 @@ def main(cfg: omegaconf.DictConfig):
             desc=f"Grouping texts in chunks of {block_size}",
         )
 
-    if cfg.model.model_type == 'encoder':
+    if cfg.model.model_type == 'decoder':
         data_collator = default_data_collator
     else:
         data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm_probability=cfg.run.mlm_probability)

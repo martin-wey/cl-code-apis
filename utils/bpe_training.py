@@ -1,18 +1,19 @@
 """
 BPE tokenizer training.
-Adapted from: https://github.com/huggingface/transformers/blob/main/examples/research_projects/codeparrot/scripts/bpe_training.py
 """
 import argparse
 
 from datasets import load_dataset
 from tqdm import tqdm
 from transformers import AutoTokenizer, set_seed
-from transformers.models.gpt2.tokenization_gpt2 import bytes_to_unicode
+from transformers.models.gpt2.tokenization_gpt2 import bytes_to_unicode as bytes_to_unicode_gpt2
+from transformers.models.roberta.tokenization_roberta import bytes_to_unicode as bytes_to_unicode_roberta
 
 
-def batch_iterator(iter_dataset, args, batch_size=10):
-    for _ in tqdm(range(0, args.n_examples, batch_size)):
-        yield [next(iter_dataset)['source_code'] for _ in range(batch_size)]
+def batch_iterator(dataset, args, batch_size=1000):
+    for start_idx in tqdm(range(0, args.n_examples, batch_size)):
+        samples = dataset[start_idx:start_idx + batch_size]
+        yield samples['source_code']
 
 
 def main():
@@ -35,13 +36,15 @@ def main():
         set_seed(args.seed)
 
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_type)
-    base_vocab = list(bytes_to_unicode().values())
+    if args.tokenizer_type == 'gpt2':
+        base_vocab = list(bytes_to_unicode_gpt2().values())
+    else:
+        base_vocab = list(bytes_to_unicode_roberta().values())
 
-    dataset = load_dataset(args.dataset_name, split='train', streaming=True, use_auth_token=True)
-    iter_dataset = iter(dataset)
+    dataset = load_dataset(args.dataset_name, split='train', use_auth_token=True)
 
     new_tokenizer = tokenizer.train_new_from_iterator(
-        batch_iterator(iter_dataset, args), vocab_size=args.vocab_size, initial_alphabet=base_vocab
+        batch_iterator(dataset, args), vocab_size=args.vocab_size, initial_alphabet=base_vocab
     )
     new_tokenizer.save_pretrained(args.output_dir)
 
