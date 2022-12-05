@@ -1,6 +1,7 @@
 import logging
 import multiprocessing
 import os
+from itertools import chain
 
 import numpy as np
 import omegaconf
@@ -152,7 +153,7 @@ def finetune_decoder(cfg: omegaconf.DictConfig,
                      tokenizer: transformers.AutoTokenizer,
                      dataset: torch.utils.data.Dataset):
     def tokenize_function(examples):
-        return tokenizer(examples['source_code'], padding='max_length', truncation=False)
+        return tokenizer(examples['source_code'], return_attention_mask=False)
 
     logger.info("Generating fine-tuning samples.")
     with multiprocessing.Pool(cfg.run.preprocessing_num_workers) as pool:
@@ -162,9 +163,6 @@ def finetune_decoder(cfg: omegaconf.DictConfig,
             results = list(tqdm(pool.imap(get_api_call_completion_samples, iter(dataset)), total=len(dataset)))
     results = [item for sublist in results for item in sublist]
     dataset = Dataset.from_pandas(pd.DataFrame(results))
-
-    # filter too long samples
-    dataset = dataset.filter(lambda e: len(tokenizer(e['source_code']).input_ids) <= tokenizer.model_max_length)
 
     dataset_tokenized = dataset.map(
         tokenize_function,
@@ -180,13 +178,11 @@ def finetune_decoder(cfg: omegaconf.DictConfig,
         """Create labels by hand to ignore all `ids` that are not part of the API usage in the loss."""
         context_len = len(tokenizer(example['context']).input_ids)
         ground_truth_len = len(tokenizer(example['ground_truth']).input_ids)
-        padding_len = len(example['input_ids']) - context_len - ground_truth_len
 
         labels_context = [-100] * context_len
         labels_ground_truth = example['input_ids'][context_len:context_len + ground_truth_len]
-        labels_padding = [-100] * padding_len
 
-        labels = labels_context + labels_ground_truth + labels_padding
+        labels = labels_context + labels_ground_truth
         return {'labels': labels}
 
     dataset_tokenized = dataset_tokenized.map(
@@ -203,6 +199,39 @@ def finetune_decoder(cfg: omegaconf.DictConfig,
     n_valid_samples = int(len(dataset_tokenized) * 0.10)
     valid_dataset = dataset_tokenized.select(list(range(n_valid_samples)))
     train_dataset = dataset_tokenized.select(list(range(n_valid_samples, len(dataset_tokenized))))
+
+    block_size = tokenizer.model_max_length if tokenizer.model_max_length <= 1024 else 1024
+
+    def group_texts(examples):
+        # Concatenate all texts.
+        concatenated_examples = {k: list(chain(*examples[k])) for k in examples.keys()}
+        total_length = len(concatenated_examples[list(examples.keys())[0]])
+        # We drop the small remainder, we could add padding if the model supported it instead of this drop, you can
+        # customize this part to your needs.
+        if total_length >= block_size:
+            total_length = (total_length // block_size) * block_size
+        # Split by chunks of max_len.
+        result = {
+            k: [t[i: i + block_size] for i in range(0, total_length, block_size)]
+            for k, t in concatenated_examples.items()
+        }
+        return result
+
+    train_dataset = train_dataset.map(
+        group_texts,
+        batched=True,
+        num_proc=cfg.run.preprocessing_num_workers,
+        load_from_cache_file=True,
+        desc=f"Grouping texts in chunks of {block_size}",
+    )
+    valid_dataset = valid_dataset.map(
+        group_texts,
+        batched=True,
+        num_proc=cfg.run.preprocessing_num_workers,
+        load_from_cache_file=True,
+        desc=f"Grouping texts in chunks of {block_size}",
+    )
+
     train_dataloader = DataLoader(
         train_dataset,
         shuffle=True,
@@ -232,6 +261,7 @@ def finetune_decoder(cfg: omegaconf.DictConfig,
                                                 num_training_steps=len(train_dataloader) * cfg.run.num_train_epochs)
 
     logger.info("***** Running fine-tuning *****")
+    logger.info("  Task = %s", cfg.run.task)
     logger.info("  Num examples = %d", len(train_dataset))
     logger.info("  Num Epochs = %d", cfg.run.num_train_epochs)
     logger.info("  Total train batch size  = %d", cfg.run.train_batch_size)
@@ -242,23 +272,26 @@ def finetune_decoder(cfg: omegaconf.DictConfig,
 
     best_eval_loss = 10e6
     tr_num, tr_loss = 0, 0
-    for idx in range(cfg.run.num_train_epochs):
-        logger.info(f"Starting epoch {idx}")
-        for step, batch in enumerate(tqdm(train_dataloader, desc='Training')):
+    for epoch in range(1, cfg.run.num_train_epochs + 1):
+        logger.info(f"Starting epoch {epoch}")
+        for step, batch in enumerate(tqdm(train_dataloader, desc='Training'), start=1):
             input_ids = batch['input_ids'].to(cfg.device)
-            attention_mask = batch['attention_mask'].to(cfg.device)
             labels = batch['labels'].to(cfg.device)
-
-            outputs = model(input_ids=input_ids, labels=labels, attention_mask=attention_mask)
+            outputs = model(input_ids=input_ids, labels=labels)
             loss = outputs.loss
 
             tr_loss += loss.item()
             tr_num += 1
-            if (step + 1) % cfg.run.logging_steps == 0:
+            if step % cfg.run.logging_steps == 0:
                 avg_loss = round(tr_loss / tr_num, 5)
                 if cfg.use_wandb:
-                    wandb.log({'train/loss': avg_loss, 'epoch': idx, 'step': step + 1}, step=step + 1)
-                logger.info(f"epoch {idx} | step {step + 1} | loss {avg_loss}")
+                    wandb.log(
+                        {
+                            'train/loss': avg_loss,
+                            'epoch': epoch,
+                            'step': step * epoch
+                        }, step=step * epoch)
+                logger.info(f"epoch {epoch} | step {step * epoch} | loss {avg_loss}")
 
             # backward
             loss.backward()
@@ -272,19 +305,22 @@ def finetune_decoder(cfg: omegaconf.DictConfig,
         for eval_step, batch in enumerate(tqdm(valid_dataloader, desc='Validation')):
             with torch.no_grad():
                 input_ids = batch['input_ids'].to(cfg.device)
-                attention_mask = batch['attention_mask'].to(cfg.device)
                 labels = batch['labels'].to(cfg.device)
-
-                outputs = model(input_ids=input_ids, labels=labels, attention_mask=attention_mask)
+                outputs = model(input_ids=input_ids, labels=labels)
                 loss = outputs.loss
                 eval_loss += loss.item()
         model.train()
         eval_loss /= eval_step
         eval_ppl = round(np.exp(eval_loss), 5)
         if cfg.use_wandb:
-            wandb.log({'eval/loss': round(eval_loss, 5), 'eval/perplexity': eval_ppl, 'epoch': idx, 'step': step + 1},
-                      step=step + 1)
-        logger.info(f"epoch {idx} | eval loss {round(eval_loss, 5)} | eval ppl {eval_ppl}")
+            wandb.log(
+                {
+                    'eval/loss': round(eval_loss, 5),
+                    'eval/perplexity': eval_ppl,
+                    'epoch': epoch,
+                    'step': step * epoch
+                }, step=step)
+        logger.info(f"epoch {epoch} | eval loss {round(eval_loss, 5)} | eval ppl {eval_ppl}")
 
         if eval_loss < best_eval_loss:
             best_eval_loss = eval_loss
