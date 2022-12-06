@@ -1,10 +1,9 @@
 ---
-# dataset name for loading from HF hub
 hf_user: martiwey
 dataset_name: gh-java-methods-small-id-ft-train
 
-task: api_call_completion     # api_call_completion | api_usage_completion
-domain: id_all                # id_all | ood_all | ood_general | ood_security | ood_android | ood_web | ood_guava
+task: api-call-completion     # api-call-completion | api-usage-completion
+domain: id-all                # id-all | ood-all | ood-general | ood-security | ood-android | ood-web | ood-guava
 
 train_batch_size: 6
 valid_batch_size: 6

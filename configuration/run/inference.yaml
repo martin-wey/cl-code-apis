@@ -1,13 +1,13 @@
 ---
-experiment: zero-shot         # zero-shot, naive, cl
-evaluate: api_completion      # perplexity | token_completion | api_completion | api_usage_completion
+experiment: zero-shot   # zero-shot, naive, cl
 
-# dataset name to load from HF hub
 hf_user: martiwey
 dataset_name: gh-java-methods-small-ood-test
-domain: all
 
-# HP for the api_usage_completion task
+task: api-call-completion      # perplexity | token-completion | api-call-completion | api-usage-completion
+domain: all                    # all | general | security | android | web | guava
+
+# HP for the api-usage-completion task
 max_new_tokens: 30
 do_sample: true
 temperate: 0.2

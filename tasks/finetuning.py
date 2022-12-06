@@ -157,9 +157,9 @@ def finetune_decoder(cfg: omegaconf.DictConfig,
 
     logger.info("Generating fine-tuning samples.")
     with multiprocessing.Pool(cfg.run.preprocessing_num_workers) as pool:
-        if cfg.run.task == 'api_usage_completion':
+        if cfg.run.task == 'api-usage-completion':
             results = list(tqdm(pool.imap(get_api_usage_completion_samples, iter(dataset)), total=len(dataset)))
-        else:
+        elif cfg.run.task == 'api-call-completion':
             results = list(tqdm(pool.imap(get_api_call_completion_samples, iter(dataset)), total=len(dataset)))
     results = [item for sublist in results for item in sublist]
     dataset = Dataset.from_pandas(pd.DataFrame(results))
@@ -272,6 +272,7 @@ def finetune_decoder(cfg: omegaconf.DictConfig,
 
     best_eval_loss = 10e6
     tr_num, tr_loss = 0, 0
+    completed_steps = 0
     for epoch in range(1, cfg.run.num_train_epochs + 1):
         logger.info(f"Starting epoch {epoch}")
         for step, batch in enumerate(tqdm(train_dataloader, desc='Training'), start=1):
@@ -280,6 +281,7 @@ def finetune_decoder(cfg: omegaconf.DictConfig,
             outputs = model(input_ids=input_ids, labels=labels)
             loss = outputs.loss
 
+            completed_steps += 1
             tr_loss += loss.item()
             tr_num += 1
             if step % cfg.run.logging_steps == 0:
@@ -289,9 +291,9 @@ def finetune_decoder(cfg: omegaconf.DictConfig,
                         {
                             'train/loss': avg_loss,
                             'epoch': epoch,
-                            'step': step * epoch
-                        }, step=step * epoch)
-                logger.info(f"epoch {epoch} | step {step * epoch} | loss {avg_loss}")
+                            'step': completed_steps
+                        }, step=completed_steps)
+                logger.info(f"epoch {epoch} | step {step * completed_steps} | loss {avg_loss}")
 
             # backward
             loss.backward()
@@ -318,8 +320,8 @@ def finetune_decoder(cfg: omegaconf.DictConfig,
                     'eval/loss': round(eval_loss, 5),
                     'eval/perplexity': eval_ppl,
                     'epoch': epoch,
-                    'step': step * epoch
-                }, step=step)
+                    'step': completed_steps
+                }, step=completed_steps)
         logger.info(f"epoch {epoch} | eval loss {round(eval_loss, 5)} | eval ppl {eval_ppl}")
 
         if eval_loss < best_eval_loss:

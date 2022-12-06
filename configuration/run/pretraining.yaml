@@ -1,5 +1,4 @@
 ---
-# dataset names for loading from HF hub
 train_dataset_name: martiwey/gh-java-methods-small-id-train
 valid_dataset_name: martiwey/gh-java-methods-small-id-valid
 
@@ -7,10 +6,10 @@ train_batch_size: 12
 valid_batch_size: 12
 shuffle_buffer: 10000
 mixed_precision: fp16
-weight_decay: 0.01          # 0.1 decoder, 0.01 encoder
-learning_rate: 5e-5         # 5e-5 decoder, 5e-6 encoder
-lr_scheduler_type: linear   # cosine decoder, linear encoder
-num_warmup_steps: 10000
+weight_decay: 0.01  # 0.1 decoder, 0.01 encoder
+learning_rate: 5e-5
+lr_scheduler_type: cosine
+num_warmup_steps: 5000
 gradient_accumulation_steps: 8
 gradient_checkpointing: false
 num_train_epochs: 25
