@@ -258,33 +258,35 @@ def finetune_decoder(cfg: omegaconf.DictConfig,
     ]
     optimizer = AdamW(optimizer_grouped_parameters, lr=cfg.run.learning_rate)
     scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0,
-                                                num_training_steps=len(train_dataloader) * cfg.run.num_train_epochs)
+                                                num_training_steps=cfg.run.max_train_steps)
 
     logger.info("***** Running fine-tuning *****")
     logger.info("  Task = %s", cfg.run.task)
     logger.info("  Num examples = %d", len(train_dataset))
-    logger.info("  Num Epochs = %d", cfg.run.num_train_epochs)
+    logger.info("  Max num Epochs = %d", cfg.run.num_train_epochs)
     logger.info("  Total train batch size  = %d", cfg.run.train_batch_size)
-    logger.info("  Total optimization steps = %d", len(train_dataloader) * cfg.run.num_train_epochs)
+    logger.info("  Total optimization steps = %d", cfg.run.max_train_steps)
 
     model.zero_grad()
     model.train()
 
+    progress_bar = tqdm(range(cfg.run.max_train_steps), desc='Training')
+    completed_steps = 0
     best_eval_loss = 10e6
     tr_num, tr_loss = 0, 0
-    completed_steps = 0
     for epoch in range(1, cfg.run.num_train_epochs + 1):
         logger.info(f"Starting epoch {epoch}")
-        for step, batch in enumerate(tqdm(train_dataloader, desc='Training'), start=1):
+        for batch in train_dataloader:
             input_ids = batch['input_ids'].to(cfg.device)
             labels = batch['labels'].to(cfg.device)
             outputs = model(input_ids=input_ids, labels=labels)
             loss = outputs.loss
 
             completed_steps += 1
+            progress_bar.update(1)
             tr_loss += loss.item()
             tr_num += 1
-            if step % cfg.run.logging_steps == 0:
+            if completed_steps % cfg.run.logging_steps == 0:
                 avg_loss = round(tr_loss / tr_num, 5)
                 if cfg.use_wandb:
                     wandb.log(
@@ -293,7 +295,7 @@ def finetune_decoder(cfg: omegaconf.DictConfig,
                             'epoch': epoch,
                             'step': completed_steps
                         }, step=completed_steps)
-                logger.info(f"epoch {epoch} | step {step * completed_steps} | loss {avg_loss}")
+                logger.info(f"epoch {epoch} | step {completed_steps} | loss {avg_loss}")
 
             # backward
             loss.backward()
@@ -302,36 +304,41 @@ def finetune_decoder(cfg: omegaconf.DictConfig,
             optimizer.zero_grad()
             scheduler.step()
 
-        model.eval()
-        eval_loss = 0
-        for eval_step, batch in enumerate(tqdm(valid_dataloader, desc='Validation')):
-            with torch.no_grad():
-                input_ids = batch['input_ids'].to(cfg.device)
-                labels = batch['labels'].to(cfg.device)
-                outputs = model(input_ids=input_ids, labels=labels)
-                loss = outputs.loss
-                eval_loss += loss.item()
-        model.train()
-        eval_loss /= eval_step
-        eval_ppl = round(np.exp(eval_loss), 5)
-        if cfg.use_wandb:
-            wandb.log(
-                {
-                    'eval/loss': round(eval_loss, 5),
-                    'eval/perplexity': eval_ppl,
-                    'epoch': epoch,
-                    'step': completed_steps
-                }, step=completed_steps)
-        logger.info(f"epoch {epoch} | eval loss {round(eval_loss, 5)} | eval ppl {eval_ppl}")
+            if completed_steps % cfg.run.eval_steps == 0:
+                logger.info(f"Running validation after {completed_steps} steps.")
+                model.eval()
+                eval_loss = 0
+                for eval_step, batch in enumerate(tqdm(valid_dataloader, desc='Validation')):
+                    with torch.no_grad():
+                        input_ids = batch['input_ids'].to(cfg.device)
+                        labels = batch['labels'].to(cfg.device)
+                        outputs = model(input_ids=input_ids, labels=labels)
+                        loss = outputs.loss
+                        eval_loss += loss.item()
+                model.train()
+                eval_loss /= eval_step
+                eval_ppl = round(np.exp(eval_loss), 5)
+                if cfg.use_wandb:
+                    wandb.log(
+                        {
+                            'eval/loss': round(eval_loss, 5),
+                            'eval/perplexity': eval_ppl,
+                            'epoch': epoch,
+                            'step': completed_steps
+                        }, step=completed_steps)
+                logger.info(f"epoch {epoch} | eval loss {round(eval_loss, 5)} | eval ppl {eval_ppl}")
 
-        if eval_loss < best_eval_loss:
-            best_eval_loss = eval_loss
-            logger.info("  " + "*" * 20)
-            logger.info("  Best eval loss:%s", round(best_eval_loss, 4))
-            logger.info("  " + "*" * 20)
+                checkpoint_prefix = f'step_{completed_steps}'
+                if not os.path.exists(checkpoint_prefix):
+                    os.makedirs(checkpoint_prefix)
+                model.save_pretrained(checkpoint_prefix)
+                logger.info(f"New model checkpoint saved {os.path.join(os.getcwd(), checkpoint_prefix)}")
 
-            checkpoint_prefix = 'checkpoint-best-loss'
-            if not os.path.exists(checkpoint_prefix):
-                os.makedirs(checkpoint_prefix)
-            model.save_pretrained(checkpoint_prefix)
-            logger.info(f"New best model checkpoint saved {os.path.join(os.getcwd(), checkpoint_prefix)}")
+                if eval_loss < best_eval_loss:
+                    best_eval_loss = eval_loss
+                    logger.info("  " + "*" * 20)
+                    logger.info("  Best eval loss:%s", round(best_eval_loss, 4))
+                    logger.info("  " + "*" * 20)
+                    if cfg.use_wandb:
+                        wandb.run.summary['best_eval_loss'] = best_eval_loss
+                        wandb.run.summary['best_checkpoint_step'] = completed_steps
