@@ -438,7 +438,7 @@ def evaluate_api_usage_completion(cfg: omegaconf.DictConfig,
     results = [item for sublist in results for item in sublist]
     dataset = Dataset.from_pandas(pd.DataFrame(results))
 
-    # filter API usage statements that are too long to generate
+    # filter samples that are too long for the model to generate
     dataset = dataset.filter(lambda e: len(tokenizer(e['ground_truth']).input_ids) <= cfg.run.max_new_tokens)
 
     dataset_tokenized = dataset.map(

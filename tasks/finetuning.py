@@ -14,8 +14,7 @@ from torch.optim import AdamW
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import (
-    default_data_collator,
-    get_linear_schedule_with_warmup
+    default_data_collator
 )
 
 from utils.jdk_apis import JDK_APIS
@@ -43,7 +42,7 @@ def get_api_usage_completion_samples(example):
             # ignore API initialization samples
             if usage[1] == '<init>':
                 continue
-            # ignore API calls not part of JDK when testing on ID dataset
+            # ignore API calls not part of JDK when fine-tuning on ID dataset
             if example['api'] == 'NaN' and ground_truth not in JDK_APIS:
                 continue
             # for OOD data, ignore APIs that are not OOD
@@ -86,7 +85,7 @@ def get_api_usage_completion_samples(example):
 
             if open_parenthesis == 0:
                 new_sample = {
-                    'source_code': example['source_code'][:end_token_idx],
+                    'source_code': example['source_code'],
                     'context': example['source_code'][:start_token_idx],
                     'ground_truth': example['source_code'][start_token_idx:end_token_idx],
                     'domain': example['domain'],
@@ -119,7 +118,7 @@ def get_api_call_completion_samples(example):
             # ignore API initialization samples
             if usage[1] == '<init>':
                 continue
-            # ignore API calls not part of JDK when testing on ID dataset
+            # ignore API calls not part of JDK when fine-tuning on ID dataset
             if example['api'] == 'NaN' and ground_truth not in JDK_APIS:
                 continue
             # for OOD data, ignore APIs that are not OOD
@@ -136,7 +135,7 @@ def get_api_call_completion_samples(example):
                 continue
 
             new_sample = {
-                'source_code': example['source_code'][:end_token_idx],
+                'source_code': example['source_code'],
                 'context': example['source_code'][:start_token_idx],
                 'ground_truth': api_call,
                 'domain': example['domain'],
@@ -174,15 +173,21 @@ def finetune_decoder(cfg: omegaconf.DictConfig,
         desc="Running tokenizer on dataset",
     )
 
+    # filter samples that are too long for the model to generate
+    dataset_tokenized = dataset_tokenized.filter(
+        lambda e: len(tokenizer(e['ground_truth']).input_ids) <= cfg.run.max_new_tokens)
+
     def create_labels(example):
         """Create labels by hand to ignore all `ids` that are not part of the API usage in the loss."""
-        context_len = len(tokenizer(example['context']).input_ids)
+        right_context_len = len(tokenizer(example['context']).input_ids)
         ground_truth_len = len(tokenizer(example['ground_truth']).input_ids)
+        left_context_len = len(example['input_ids'][right_context_len + ground_truth_len:])
 
-        labels_context = [-100] * context_len
-        labels_ground_truth = example['input_ids'][context_len:context_len + ground_truth_len]
+        labels_context = [-100] * right_context_len
+        labels_ground_truth = example['input_ids'][right_context_len:right_context_len + ground_truth_len]
+        labels_left = [-100] * left_context_len
 
-        labels = labels_context + labels_ground_truth
+        labels = labels_context + labels_ground_truth + labels_left
         return {'labels': labels}
 
     dataset_tokenized = dataset_tokenized.map(
@@ -257,15 +262,13 @@ def finetune_decoder(cfg: omegaconf.DictConfig,
         },
     ]
     optimizer = AdamW(optimizer_grouped_parameters, lr=cfg.run.learning_rate)
-    scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0,
-                                                num_training_steps=cfg.run.max_train_steps)
 
     logger.info("***** Running fine-tuning *****")
     logger.info("  Task = %s", cfg.run.task)
     logger.info("  Num examples = %d", len(train_dataset))
-    logger.info("  Max num Epochs = %d", cfg.run.num_train_epochs)
+    logger.info("  Max num epochs = %d", cfg.run.num_train_epochs)
     logger.info("  Total train batch size  = %d", cfg.run.train_batch_size)
-    logger.info("  Total optimization steps = %d", cfg.run.max_train_steps)
+    logger.info("  Evaluation strategy = %s", cfg.run.eval_strategy)
 
     model.zero_grad()
     model.train()
@@ -302,9 +305,9 @@ def finetune_decoder(cfg: omegaconf.DictConfig,
             torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.run.max_grad_norm)
             optimizer.step()
             optimizer.zero_grad()
-            scheduler.step()
 
-            if completed_steps % cfg.run.eval_steps == 0:
+            if cfg.run.eval_strategy == 'steps' and completed_steps % cfg.run.eval_steps == 0 or \
+                    cfg.run.eval_strategy == 'epochs' and completed_steps % len(train_dataloader) == 0:
                 logger.info(f"Running validation after {completed_steps} steps.")
                 model.eval()
                 eval_loss = 0
@@ -328,10 +331,14 @@ def finetune_decoder(cfg: omegaconf.DictConfig,
                         }, step=completed_steps)
                 logger.info(f"epoch {epoch} | eval loss {round(eval_loss, 5)} | eval ppl {eval_ppl}")
 
-                checkpoint_prefix = f'step_{completed_steps}'
+                if cfg.run.eval_strategy == 'steps':
+                    checkpoint_prefix = f'step_{completed_steps}'
+                else:
+                    checkpoint_prefix = f'epoch_{epoch}'
                 if not os.path.exists(checkpoint_prefix):
                     os.makedirs(checkpoint_prefix)
                 model.save_pretrained(checkpoint_prefix)
+                tokenizer.save_pretrained(checkpoint_prefix)
                 logger.info(f"New model checkpoint saved {os.path.join(os.getcwd(), checkpoint_prefix)}")
 
                 if eval_loss < best_eval_loss:

@@ -8,9 +8,11 @@ domain: id-all                # id-all | ood-all | ood-general | ood-security | 
 train_batch_size: 6
 valid_batch_size: 6
 learning_rate: 5e-5
-num_train_epochs: 2
-max_train_steps: 50000
-eval_steps: 5000
+num_train_epochs: 3
+max_train_steps: 15000
+eval_steps: 1000              # if eval_strategy set to `steps`
 weight_decay: 0.0
 max_grad_norm: 1.0
 logging_steps: 50
+max_new_tokens: 30
+eval_strategy: epochs         # epochs | steps

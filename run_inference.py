@@ -63,13 +63,13 @@ def main(cfg: omegaconf.DictConfig):
         loss, perplexity = evaluate_perplexity(cfg, model, tokenizer, dataset)
         logger.info(f"Loss: {round(loss, 4)} | perplexity: {round(perplexity, 4)}")
     # next-token prediction using CLM model
-    elif cfg.run.task == 'token_completion':
+    elif cfg.run.task == 'token-completion':
         logger.info("***** Evaluating token completion on input dataset *****")
         logger.info(f"  Num test samples: {len(dataset)}")
         n_test, correct = evaluate_token_completion(cfg, model, tokenizer, dataset)
         logger.info(f"Accuracy: {round(correct / n_test, 3)} (num tests: {n_test})")
     # next-API prediction using CLM model
-    elif cfg.run.task == 'api_completion':
+    elif cfg.run.task == 'api-call-completion':
         logger.info("***** Evaluating API completion on input dataset *****")
         cfg.run.batch_size = 1
         n_test, pass_1, pass_5, pass_10 = evaluate_api_completion(cfg, model, tokenizer, dataset)
@@ -78,13 +78,13 @@ def main(cfg: omegaconf.DictConfig):
         logger.info(f"Pass@5: {round(pass_5 / n_test, 3)}")
         logger.info(f"Pass@10: {round(pass_10 / n_test, 3)}")
     # API usage statement completion using CLM model
-    elif cfg.run.task == 'api_usage_completion':
+    elif cfg.run.task == 'api-usage-completion':
         logger.info("***** Evaluating API usage completion on input dataset *****")
         cfg.run.batch_size = 1
         evaluate_api_usage_completion(cfg, model, tokenizer, dataset)
     else:
         raise ValueError("Please select an evaluation task "
-                         "(perplexity | token_completion | api_completion | api_prediction")
+                         "(perplexity | token-completion | api-call-completion | api-usage-completion")
 
 
 if __name__ == '__main__':
