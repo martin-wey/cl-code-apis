@@ -1,18 +1,27 @@
 ---
 hf_user: martiwey
-dataset_name: gh-java-methods-small-id-ft-train
+dataset_name: gh-java-methods-small-ood-train
 
-task: api-call-completion     # api-call-completion | api-usage-completion
-domain: id-all                # id-all | ood-all | ood-general | ood-security | ood-android | ood-web | ood-guava
+task: call     # call: api call completion | usage: api usage completion
+
+# the strategy used to fine-tune the model: joint | naive | cumulative.
+#   `joint`: fine-tuning on the whole dataset (i.e., offline).
+#   `naive`: naive sequential fine-tuning.
+#   `cumulative`: fine-tuning with access to all data from previous experience.
+strategy: naive
 
 train_batch_size: 6
 valid_batch_size: 6
 learning_rate: 5e-5
-num_train_epochs: 3
-max_train_steps: 15000
-eval_steps: 1000              # if eval_strategy set to `steps`
-weight_decay: 0.0
-max_grad_norm: 1.0
-logging_steps: 50
+num_epochs_per_experience: 2
+
+# we filter out samples with ground-truth longer than `max_new_tokens`.
 max_new_tokens: 30
-eval_strategy: epochs         # epochs | steps
+
+# OOD domain datasets. The ordering defines the order in which the continual fine-tuning operates.
+domains:
+  - general
+  - security
+  - android
+  - web
+  - guava

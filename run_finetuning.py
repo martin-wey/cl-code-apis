@@ -3,7 +3,6 @@ import os
 
 import hydra
 import omegaconf
-import wandb
 from datasets import load_dataset
 from transformers import (
     AutoModelForCausalLM,
@@ -30,9 +29,6 @@ def main(cfg: omegaconf.DictConfig):
     # hydra changes the current working dir, so we have to keep in memory the base path of the project
     cfg.run.base_path = hydra.utils.get_original_cwd()
 
-    if cfg.use_wandb:
-        wandb.init(project='cl-code')
-
     model_path = os.path.join(cfg.run.base_path, cfg.model.model_name_or_path)
     config_cls, model_cls, tokenizer_cls = MODEL_CLS[cfg.model.model_type]
     try:
@@ -48,27 +44,16 @@ def main(cfg: omegaconf.DictConfig):
 
     logger.info(f"Loading fine-tuning dataset: ({cfg.run.dataset_name}).")
     dataset_url = os.path.join(cfg.run.hf_user, cfg.run.dataset_name)
-    dataset = load_dataset(dataset_url, split='train', use_auth_token=True)
-    dataset = dataset.remove_columns(['repo_name', 'method_path', 'method_name', 'docstring'])
+    ds = load_dataset(dataset_url, split='train', use_auth_token=True)
+    ds = ds.remove_columns(['repo_name', 'method_path', 'method_name', 'docstring'])
 
-    if 'all' not in cfg.run.domain:
-        domain = cfg.run.domain.split('-')[1]
-        logger.info(f"Filtering dataset to keep sample of domain: `{domain}`")
-        dataset = dataset.filter(lambda e: e['domain'] == domain, num_proc=cfg.run.preprocessing_num_workers)
-
-    # when using ID dataset, these columns are not present
-    if 'domain' not in dataset.column_names and 'api' not in dataset.column_names:
-        domain = ['NaN'] * len(dataset)
-        api = ['NaN'] * len(dataset)
-        dataset = dataset.add_column('domain', domain)
-        dataset = dataset.add_column('api', api)
-
-    # remove useless columns
-    dataset = dataset.remove_columns([name for name in dataset.column_names if name not in
-                                      ['source_code', 'domain', 'api', 'api_seq']])
+    datasets = []
+    for domain in cfg.run.domains:
+        domain_ds = ds.filter(lambda e: e['domain'] == domain)
+        datasets.append(domain_ds)
 
     if cfg.model.model_type == 'decoder':
-        finetune_decoder(cfg, model, tokenizer, dataset)
+        finetune_decoder(cfg, model, tokenizer, datasets)
     elif cfg.model.model_type == 'encoder':
         pass
 

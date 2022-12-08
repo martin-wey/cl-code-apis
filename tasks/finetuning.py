@@ -2,13 +2,15 @@ import logging
 import multiprocessing
 import os
 from itertools import chain
+from typing import List
 
-import numpy as np
+import avalanche
 import omegaconf
 import pandas as pd
 import torch
 import transformers
-import wandb
+from avalanche.benchmarks import CLScenario, CLStream, CLExperience
+from avalanche.benchmarks.utils import DataAttribute, ConstantSequence, AvalancheDataset
 from datasets import Dataset
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
@@ -147,18 +149,15 @@ def get_api_call_completion_samples(example):
     return samples
 
 
-def finetune_decoder(cfg: omegaconf.DictConfig,
-                     model: transformers.AutoModelForCausalLM,
-                     tokenizer: transformers.AutoTokenizer,
-                     dataset: torch.utils.data.Dataset):
+def preprocess_dataset(cfg, dataset, tokenizer):
     def tokenize_function(examples):
         return tokenizer(examples['source_code'], return_attention_mask=False)
 
     logger.info("Generating fine-tuning samples.")
     with multiprocessing.Pool(cfg.run.preprocessing_num_workers) as pool:
-        if cfg.run.task == 'api-usage-completion':
+        if cfg.run.task == 'usage':
             results = list(tqdm(pool.imap(get_api_usage_completion_samples, iter(dataset)), total=len(dataset)))
-        elif cfg.run.task == 'api-call-completion':
+        elif cfg.run.task == 'call':
             results = list(tqdm(pool.imap(get_api_call_completion_samples, iter(dataset)), total=len(dataset)))
     results = [item for sublist in results for item in sublist]
     dataset = Dataset.from_pandas(pd.DataFrame(results))
@@ -179,15 +178,15 @@ def finetune_decoder(cfg: omegaconf.DictConfig,
 
     def create_labels(example):
         """Create labels by hand to ignore all `ids` that are not part of the API usage in the loss."""
-        right_context_len = len(tokenizer(example['context']).input_ids)
+        left_context_len = len(tokenizer(example['context']).input_ids)
         ground_truth_len = len(tokenizer(example['ground_truth']).input_ids)
-        left_context_len = len(example['input_ids'][right_context_len + ground_truth_len:])
+        right_context_len = len(example['input_ids'][left_context_len + ground_truth_len:])
 
-        labels_context = [-100] * right_context_len
-        labels_ground_truth = example['input_ids'][right_context_len:right_context_len + ground_truth_len]
-        labels_left = [-100] * left_context_len
+        labels_context = [-100] * left_context_len
+        labels_ground_truth = example['input_ids'][left_context_len:left_context_len + ground_truth_len]
+        labels_right = [-100] * right_context_len
 
-        labels = labels_context + labels_ground_truth + labels_left
+        labels = labels_context + labels_ground_truth + labels_right
         return {'labels': labels}
 
     dataset_tokenized = dataset_tokenized.map(
@@ -237,115 +236,124 @@ def finetune_decoder(cfg: omegaconf.DictConfig,
         desc=f"Grouping texts in chunks of {block_size}",
     )
 
-    train_dataloader = DataLoader(
-        train_dataset,
-        shuffle=True,
-        collate_fn=default_data_collator,
-        batch_size=cfg.run.train_batch_size
+    return train_dataset, valid_dataset
+
+
+class HGNaive(avalanche.training.Naive):
+    """There are only a couple of modifications needed to
+    use huggingface:
+    - we add a bunch of attributes corresponding to the batch items,
+        redefining mb_x and mb_y too
+    - _unpack_minibatch sends the dictionary values to the GPU device
+    - forward and criterion are adapted for machine translation tasks.
+    """
+
+    @property
+    def mb_x(self):
+        """Current mini-batch input."""
+        return self.mbatch['input_ids']
+
+    @property
+    def mb_y(self):
+        """Current mini-batch target."""
+        return self.mbatch['labels']
+
+    def _unpack_minibatch(self):
+        """HuggingFace minibatches are dictionaries of tensors.
+        Move tensors to the current device."""
+        for k in self.mbatch.keys():
+            self.mbatch[k] = self.mbatch[k].to(self.device)
+
+    def forward(self):
+        out = self.model(
+            input_ids=self.mb_x,
+            labels=self.mb_y,
+        )
+        return out
+
+    def criterion(self):
+        mb_output = self.mb_output
+        return mb_output.loss
+
+
+def finetune_decoder(cfg: omegaconf.DictConfig,
+                     model: transformers.AutoModelForCausalLM,
+                     tokenizer: transformers.AutoTokenizer,
+                     datasets: List[torch.utils.data.Dataset]):
+    train_datasets, valid_datasets = [], []
+    for i, dataset in enumerate(datasets):
+        logger.info(f"Preprocessing OOD dataset #{i}")
+        train_data, valid_data = preprocess_dataset(cfg, dataset, tokenizer)
+        train_datasets.append(train_data)
+        valid_datasets.append(valid_data)
+
+    logger.info("Creating continual learning experiences.")
+    train_exps, valid_exps = [], []
+    for i, (train_data, valid_data) in enumerate(zip(train_datasets, valid_datasets)):
+        tl_train = DataAttribute(
+            ConstantSequence(i, len(train_data)), 'targets_task_labels'
+        )
+        exp_train = CLExperience()
+        exp_train.dataset = AvalancheDataset(
+            [train_data], data_attributes=[tl_train], collate_fn=default_data_collator
+        )
+
+        tl_valid = DataAttribute(
+            ConstantSequence(i, len(valid_data)), 'targets_task_labels'
+        )
+        exp_valid = CLExperience()
+        exp_valid.dataset = AvalancheDataset(
+            [valid_data], data_attributes=[tl_valid], collate_fn=default_data_collator
+        )
+
+        train_exps.append(exp_train), valid_exps.append(exp_valid)
+
+    benchmark = CLScenario(
+        [
+            CLStream('train', train_exps),
+            CLStream('valid', valid_exps)
+        ]
     )
-    valid_dataloader = DataLoader(
-        valid_dataset,
-        shuffle=False,
-        collate_fn=default_data_collator,
-        batch_size=cfg.run.valid_batch_size
+
+    loggers = []
+    loggers.append(avalanche.logging.InteractiveLogger())
+    if cfg.use_wandb:
+        wandb_logger = avalanche.logging.WandBLogger(
+            project_name='cl-code',
+            run_name=f'{cfg.model.model_name}_ft_{cfg.run.task}_{cfg.run.strategy}',
+            config=vars(cfg)
+        )
+        loggers.append(wandb_logger)
+
+    eval_plugin = avalanche.training.plugins.EvaluationPlugin(
+        avalanche.evaluation.metrics.loss_metrics(
+            epoch=True,
+            epoch_running=True,
+            experience=True,
+            stream=True
+        ),
+        loggers=loggers,
+        strict_checks=False,
     )
 
-    no_decay = ['bias', 'LayerNorm.weight']
-    optimizer_grouped_parameters = [
-        {
-            'params': [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
-            'weight_decay': cfg.run.weight_decay,
-        },
-        {
-            'params': [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)],
-            'weight_decay': 0.0,
-        },
-    ]
-    optimizer = AdamW(optimizer_grouped_parameters, lr=cfg.run.learning_rate)
+    optimizer = AdamW(model.parameters(), lr=cfg.run.learning_rate)
+    strategy = HGNaive(
+        model,
+        optimizer,
+        evaluator=eval_plugin,
+        train_epochs=cfg.run.num_epochs_per_experience,
+        train_mb_size=cfg.run.train_batch_size,
+        eval_mb_size=cfg.run.valid_batch_size,
+        eval_every=1,
+        device=cfg.device
+    )
 
-    logger.info("***** Running fine-tuning *****")
-    logger.info("  Task = %s", cfg.run.task)
-    logger.info("  Num examples = %d", len(train_dataset))
-    logger.info("  Max num epochs = %d", cfg.run.num_train_epochs)
-    logger.info("  Total train batch size  = %d", cfg.run.train_batch_size)
-    logger.info("  Evaluation strategy = %s", cfg.run.eval_strategy)
+    for exp_id, train_exp in enumerate(benchmark.train_stream):
+        strategy.train(train_exp, eval_streams=[benchmark.valid_stream])
+        logger.info("Training completed!")
 
-    model.zero_grad()
-    model.train()
-
-    progress_bar = tqdm(range(cfg.run.max_train_steps), desc='Training')
-    completed_steps = 0
-    best_eval_loss = 10e6
-    tr_num, tr_loss = 0, 0
-    for epoch in range(1, cfg.run.num_train_epochs + 1):
-        logger.info(f"Starting epoch {epoch}")
-        for batch in train_dataloader:
-            input_ids = batch['input_ids'].to(cfg.device)
-            labels = batch['labels'].to(cfg.device)
-            outputs = model(input_ids=input_ids, labels=labels)
-            loss = outputs.loss
-
-            completed_steps += 1
-            progress_bar.update(1)
-            tr_loss += loss.item()
-            tr_num += 1
-            if completed_steps % cfg.run.logging_steps == 0:
-                avg_loss = round(tr_loss / tr_num, 5)
-                if cfg.use_wandb:
-                    wandb.log(
-                        {
-                            'train/loss': avg_loss,
-                            'epoch': epoch,
-                            'step': completed_steps
-                        }, step=completed_steps)
-                logger.info(f"epoch {epoch} | step {completed_steps} | loss {avg_loss}")
-
-            # backward
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.run.max_grad_norm)
-            optimizer.step()
-            optimizer.zero_grad()
-
-            if cfg.run.eval_strategy == 'steps' and completed_steps % cfg.run.eval_steps == 0 or \
-                    cfg.run.eval_strategy == 'epochs' and completed_steps % len(train_dataloader) == 0:
-                logger.info(f"Running validation after {completed_steps} steps.")
-                model.eval()
-                eval_loss = 0
-                for eval_step, batch in enumerate(tqdm(valid_dataloader, desc='Validation')):
-                    with torch.no_grad():
-                        input_ids = batch['input_ids'].to(cfg.device)
-                        labels = batch['labels'].to(cfg.device)
-                        outputs = model(input_ids=input_ids, labels=labels)
-                        loss = outputs.loss
-                        eval_loss += loss.item()
-                model.train()
-                eval_loss /= eval_step
-                eval_ppl = round(np.exp(eval_loss), 5)
-                if cfg.use_wandb:
-                    wandb.log(
-                        {
-                            'eval/loss': round(eval_loss, 5),
-                            'eval/perplexity': eval_ppl,
-                            'epoch': epoch,
-                            'step': completed_steps
-                        }, step=completed_steps)
-                logger.info(f"epoch {epoch} | eval loss {round(eval_loss, 5)} | eval ppl {eval_ppl}")
-
-                if cfg.run.eval_strategy == 'steps':
-                    checkpoint_prefix = f'step_{completed_steps}'
-                else:
-                    checkpoint_prefix = f'epoch_{epoch}'
-                if not os.path.exists(checkpoint_prefix):
-                    os.makedirs(checkpoint_prefix)
-                model.save_pretrained(checkpoint_prefix)
-                tokenizer.save_pretrained(checkpoint_prefix)
-                logger.info(f"New model checkpoint saved {os.path.join(os.getcwd(), checkpoint_prefix)}")
-
-                if eval_loss < best_eval_loss:
-                    best_eval_loss = eval_loss
-                    logger.info("  " + "*" * 20)
-                    logger.info("  Best eval loss:%s", round(best_eval_loss, 4))
-                    logger.info("  " + "*" * 20)
-                    if cfg.use_wandb:
-                        wandb.run.summary['best_eval_loss'] = best_eval_loss
-                        wandb.run.summary['best_checkpoint_step'] = completed_steps
+        logger.info(f"Saving model after exp {exp_id}.")
+        checkpoint_prefix = f'exp_{exp_id}'
+        model.save_pretrained(checkpoint_prefix)
+        tokenizer.save_pretrained(checkpoint_prefix)
+        logger.info(f"New model checkpoint saved {os.path.join(os.getcwd(), checkpoint_prefix)}")
