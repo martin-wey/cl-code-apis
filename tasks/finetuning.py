@@ -11,6 +11,7 @@ import torch
 import transformers
 from avalanche.benchmarks import CLScenario, CLStream, CLExperience
 from avalanche.benchmarks.utils import DataAttribute, ConstantSequence, AvalancheDataset
+from avalanche.training import Naive, JointTraining, Cumulative
 from datasets import Dataset
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
@@ -239,15 +240,7 @@ def preprocess_dataset(cfg, dataset, tokenizer):
     return train_dataset, valid_dataset
 
 
-class HGNaive(avalanche.training.Naive):
-    """There are only a couple of modifications needed to
-    use huggingface:
-    - we add a bunch of attributes corresponding to the batch items,
-        redefining mb_x and mb_y too
-    - _unpack_minibatch sends the dictionary values to the GPU device
-    - forward and criterion are adapted for machine translation tasks.
-    """
-
+class BaseHGStrategy:
     @property
     def mb_x(self):
         """Current mini-batch input."""
@@ -274,6 +267,18 @@ class HGNaive(avalanche.training.Naive):
     def criterion(self):
         mb_output = self.mb_output
         return mb_output.loss
+
+
+class HGNaive(BaseHGStrategy, Naive):
+    pass
+
+
+class HGJoint(BaseHGStrategy, JointTraining):
+    pass
+
+
+class HGCumulative(BaseHGStrategy, Cumulative):
+    pass
 
 
 def finetune_decoder(cfg: omegaconf.DictConfig,
@@ -337,9 +342,18 @@ def finetune_decoder(cfg: omegaconf.DictConfig,
     )
 
     optimizer = AdamW(model.parameters(), lr=cfg.run.learning_rate)
-    strategy = HGNaive(
-        model,
-        optimizer,
+
+    if cfg.run.strategy == 'joint':
+        strategy_cls = HGJoint
+    elif cfg.run.strategy == 'cumulative':
+        strategy_cls = HGCumulative
+    else:
+        strategy_cls = HGNaive
+
+    strategy = strategy_cls(
+        model=model,
+        optimizer=optimizer,
+        criterion=torch.nn.CrossEntropyLoss(),
         evaluator=eval_plugin,
         train_epochs=cfg.run.num_epochs_per_experience,
         train_mb_size=cfg.run.train_batch_size,
