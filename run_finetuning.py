@@ -42,6 +42,9 @@ def main(cfg: omegaconf.DictConfig):
         tokenizer = tokenizer_cls.from_pretrained(cfg.model.model_name_or_path)
     model.to(cfg.device)
 
+    tokenizer.pad_token = tokenizer.eos_token
+    model.config.pad_token_id = model.config.eos_token_id
+
     logger.info(f"Loading fine-tuning dataset: ({cfg.run.dataset_name}).")
     dataset_url = os.path.join(cfg.run.hf_user, cfg.run.dataset_name)
     ds = load_dataset(dataset_url, split='train', use_auth_token=True)

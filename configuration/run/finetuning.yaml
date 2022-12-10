@@ -13,7 +13,8 @@ strategy: naive
 train_batch_size: 6
 valid_batch_size: 6
 learning_rate: 5e-5
-num_epochs_per_experience: 2
+num_epochs_per_experience: 10
+patience: 2
 
 # we filter out samples with ground-truth longer than `max_new_tokens`.
 max_new_tokens: 30

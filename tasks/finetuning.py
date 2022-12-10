@@ -12,6 +12,7 @@ import transformers
 from avalanche.benchmarks import CLScenario, CLStream, CLExperience
 from avalanche.benchmarks.utils import DataAttribute, ConstantSequence, AvalancheDataset
 from avalanche.training import Naive, JointTraining, Cumulative
+from avalanche.training.plugins import EarlyStoppingPlugin
 from datasets import Dataset
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
@@ -88,11 +89,9 @@ def get_api_usage_completion_samples(example):
 
             if open_parenthesis == 0:
                 new_sample = {
-                    'source_code': example['source_code'],
+                    'source_code': example['source_code'][:end_token_idx],
                     'context': example['source_code'][:start_token_idx],
-                    'ground_truth': example['source_code'][start_token_idx:end_token_idx],
-                    'domain': example['domain'],
-                    'api': example['api']
+                    'ground_truth': example['source_code'][start_token_idx:end_token_idx]
                 }
                 samples.append(new_sample)
         except:
@@ -138,11 +137,9 @@ def get_api_call_completion_samples(example):
                 continue
 
             new_sample = {
-                'source_code': example['source_code'],
+                'source_code': example['source_code'][:end_token_idx],
                 'context': example['source_code'][:start_token_idx],
-                'ground_truth': api_call,
-                'domain': example['domain'],
-                'api': example['api'],
+                'ground_truth': api_call
             }
             samples.append(new_sample)
         except:
@@ -151,61 +148,69 @@ def get_api_call_completion_samples(example):
 
 
 def preprocess_dataset(cfg, dataset, tokenizer):
-    def tokenize_function(examples):
-        return tokenizer(examples['source_code'], return_attention_mask=False)
+    def tokenize_train_ds(examples):
+        return tokenizer(examples['source_code'])
 
-    logger.info("Generating fine-tuning samples.")
-    with multiprocessing.Pool(cfg.run.preprocessing_num_workers) as pool:
-        if cfg.run.task == 'usage':
-            results = list(tqdm(pool.imap(get_api_usage_completion_samples, iter(dataset)), total=len(dataset)))
-        elif cfg.run.task == 'call':
-            results = list(tqdm(pool.imap(get_api_call_completion_samples, iter(dataset)), total=len(dataset)))
-    results = [item for sublist in results for item in sublist]
-    dataset = Dataset.from_pandas(pd.DataFrame(results))
+    def tokenize_valid_ds(examples):
+        return tokenizer(examples['source_code'], padding='max_length')
 
-    dataset_tokenized = dataset.map(
-        tokenize_function,
+    # 90% training / 10% validation
+    n_valid_samples = int(len(dataset) * 0.10)
+    valid_ds = dataset.select(list(range(n_valid_samples)))
+    train_ds = dataset.select(list(range(n_valid_samples, len(dataset))))
+
+    train_dataset = train_ds.map(
+        tokenize_train_ds,
         batched=True,
         num_proc=cfg.run.preprocessing_num_workers,
         load_from_cache_file=True,
-        remove_columns=[cname for cname in dataset.column_names if cname not in
-                        ['input_ids', 'attention_mask', 'context', 'ground_truth']],
-        desc="Running tokenizer on dataset",
+        remove_columns=[cname for cname in train_ds.column_names if cname not in ['input_ids', 'labels']],
+        desc="Running tokenizer on training dataset",
     )
 
-    # filter samples that are too long for the model to generate
-    dataset_tokenized = dataset_tokenized.filter(
-        lambda e: len(tokenizer(e['ground_truth']).input_ids) <= cfg.run.max_new_tokens)
+    logger.info("Generating validation samples.")
+    with multiprocessing.Pool(cfg.run.preprocessing_num_workers) as pool:
+        if cfg.run.task == 'usage':
+            results = list(tqdm(pool.imap(get_api_usage_completion_samples, iter(valid_ds)), total=len(valid_ds)))
+        elif cfg.run.task == 'call':
+            results = list(tqdm(pool.imap(get_api_call_completion_samples, iter(valid_ds)), total=len(valid_ds)))
+    results = [item for sublist in results for item in sublist]
+    valid_dataset = Dataset.from_pandas(pd.DataFrame(results))
+    valid_dataset = valid_dataset.filter(
+        lambda e: len(tokenizer(e['source_code']).input_ids) <= tokenizer.model_max_length and
+                  len(tokenizer(e['ground_truth']).input_ids) <= cfg.run.max_new_tokens)
+
+    valid_dataset = valid_dataset.map(
+        tokenize_valid_ds,
+        batched=True,
+        num_proc=cfg.run.preprocessing_num_workers,
+        load_from_cache_file=True,
+        desc="Running tokenizer on validation dataset",
+    )
 
     def create_labels(example):
-        """Create labels by hand to ignore all `ids` that are not part of the API usage in the loss."""
-        left_context_len = len(tokenizer(example['context']).input_ids)
+        context_len = len(tokenizer(example['context']).input_ids)
         ground_truth_len = len(tokenizer(example['ground_truth']).input_ids)
-        right_context_len = len(example['input_ids'][left_context_len + ground_truth_len:])
+        padding_len = len(example['input_ids']) - context_len - ground_truth_len
 
-        labels_context = [-100] * left_context_len
-        labels_ground_truth = example['input_ids'][left_context_len:left_context_len + ground_truth_len]
-        labels_right = [-100] * right_context_len
+        before_gt_len = context_len
 
-        labels = labels_context + labels_ground_truth + labels_right
+        labels_padding = [-100] * padding_len
+        labels_context = [-100] * context_len
+        labels_ground_truth = example['input_ids'][before_gt_len:before_gt_len + ground_truth_len]
+
+        labels = labels_context + labels_ground_truth + labels_padding
         return {'labels': labels}
 
-    dataset_tokenized = dataset_tokenized.map(
+    valid_dataset = valid_dataset.map(
         create_labels,
         batched=False,
         num_proc=cfg.run.preprocessing_num_workers,
         load_from_cache_file=True,
-        remove_columns=[cname for cname in dataset_tokenized.column_names if cname not in
-                        ['input_ids', 'attention_mask', 'labels']],
         desc="Creating sample labels.",
     )
 
-    # 90% training / 10% validation
-    n_valid_samples = int(len(dataset_tokenized) * 0.10)
-    valid_dataset = dataset_tokenized.select(list(range(n_valid_samples)))
-    train_dataset = dataset_tokenized.select(list(range(n_valid_samples, len(dataset_tokenized))))
-
-    block_size = tokenizer.model_max_length if tokenizer.model_max_length <= 1024 else 1024
+    block_size = tokenizer.model_max_length
 
     def group_texts(examples):
         # Concatenate all texts.
@@ -220,6 +225,7 @@ def preprocess_dataset(cfg, dataset, tokenizer):
             k: [t[i: i + block_size] for i in range(0, total_length, block_size)]
             for k, t in concatenated_examples.items()
         }
+        result['labels'] = result['input_ids'].copy()
         return result
 
     train_dataset = train_dataset.map(
@@ -229,13 +235,11 @@ def preprocess_dataset(cfg, dataset, tokenizer):
         load_from_cache_file=True,
         desc=f"Grouping texts in chunks of {block_size}",
     )
-    valid_dataset = valid_dataset.map(
-        group_texts,
-        batched=True,
-        num_proc=cfg.run.preprocessing_num_workers,
-        load_from_cache_file=True,
-        desc=f"Grouping texts in chunks of {block_size}",
-    )
+
+    train_dataset = train_dataset.remove_columns(
+        [cname for cname in train_dataset.column_names if cname not in ['input_ids', 'labels']])
+    valid_dataset = valid_dataset.remove_columns(
+        [cname for cname in valid_dataset.column_names if cname not in ['input_ids', 'labels']])
 
     return train_dataset, valid_dataset
 
@@ -260,7 +264,7 @@ class BaseHGStrategy:
     def forward(self):
         out = self.model(
             input_ids=self.mb_x,
-            labels=self.mb_y,
+            labels=self.mb_y
         )
         return out
 
@@ -341,15 +345,17 @@ def finetune_decoder(cfg: omegaconf.DictConfig,
         strict_checks=False,
     )
 
-    optimizer = AdamW(model.parameters(), lr=cfg.run.learning_rate)
-
     if cfg.run.strategy == 'joint':
         strategy_cls = HGJoint
     elif cfg.run.strategy == 'cumulative':
         strategy_cls = HGCumulative
     else:
+        # for all other strategies, we add plugins to the strategy
         strategy_cls = HGNaive
 
+    optimizer = AdamW(model.parameters(), lr=cfg.run.learning_rate)
+    early_stopping = EarlyStoppingPlugin(patience=cfg.run.patience, val_stream_name='valid_stream',
+                                         metric_name='Loss_Stream', mode='min')
     strategy = strategy_cls(
         model=model,
         optimizer=optimizer,
@@ -359,6 +365,7 @@ def finetune_decoder(cfg: omegaconf.DictConfig,
         train_mb_size=cfg.run.train_batch_size,
         eval_mb_size=cfg.run.valid_batch_size,
         eval_every=1,
+        plugins=[early_stopping],
         device=cfg.device
     )
 
@@ -366,8 +373,9 @@ def finetune_decoder(cfg: omegaconf.DictConfig,
         strategy.train(train_exp, eval_streams=[benchmark.valid_stream])
         logger.info("Training completed!")
 
-        logger.info(f"Saving model after exp {exp_id}.")
+        logger.info(f"Saving best model after exp {exp_id}.")
         checkpoint_prefix = f'exp_{exp_id}'
-        model.save_pretrained(checkpoint_prefix)
+        # EarlyStoppingPlugin loads the best model after training in the strategy
+        strategy.model.save_pretrained(checkpoint_prefix)
         tokenizer.save_pretrained(checkpoint_prefix)
         logger.info(f"New model checkpoint saved {os.path.join(os.getcwd(), checkpoint_prefix)}")
