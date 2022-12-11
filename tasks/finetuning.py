@@ -12,7 +12,6 @@ import transformers
 from avalanche.benchmarks import CLScenario, CLStream, CLExperience
 from avalanche.benchmarks.utils import DataAttribute, ConstantSequence, AvalancheDataset
 from avalanche.training import Naive, JointTraining, Cumulative
-from avalanche.training.plugins import EarlyStoppingPlugin
 from datasets import Dataset
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
@@ -22,6 +21,7 @@ from transformers import (
 )
 
 from utils.jdk_apis import JDK_APIS
+from tasks.plugins.early_stopping import EarlyStoppingPlugin
 
 logger = logging.getLogger(__name__)
 
@@ -355,7 +355,7 @@ def finetune_decoder(cfg: omegaconf.DictConfig,
 
     optimizer = AdamW(model.parameters(), lr=cfg.run.learning_rate)
     early_stopping = EarlyStoppingPlugin(patience=cfg.run.patience, val_stream_name='valid_stream',
-                                         metric_name='Loss_Stream', mode='min')
+                                         metric_name='Loss_Exp', mode='min', criteria='exp', verbose=True)
     strategy = strategy_cls(
         model=model,
         optimizer=optimizer,
