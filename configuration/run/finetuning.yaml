@@ -2,8 +2,6 @@
 hf_user: martiwey
 dataset_name: gh-java-methods-small-ood-train
 
-task: call     # call: api call completion | usage: api usage completion
-
 # the strategy used to fine-tune the model: joint | naive | cumulative.
 #   `joint`: fine-tuning on the whole dataset (i.e., offline).
 #   `naive`: naive sequential fine-tuning.
@@ -13,8 +11,8 @@ strategy: naive
 train_batch_size: 6
 valid_batch_size: 6
 learning_rate: 5e-5
-num_epochs_per_experience: 10
-patience: 2
+num_epochs_per_experience: 10   # decoder: 10 | encoder: 20
+patience: 2   # early-stopping
 
 # we filter out samples with ground-truth longer than `max_new_tokens`.
 max_new_tokens: 30

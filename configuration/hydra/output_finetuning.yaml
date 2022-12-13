@@ -1,3 +1,3 @@
 ---
 run:
-  dir: ${model.model_base_path}/ft_${run.task}_${run.strategy}
+  dir: ${model.model_base_path}/ft_${run.strategy}

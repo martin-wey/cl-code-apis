@@ -5,21 +5,23 @@ import hydra
 import omegaconf
 from datasets import load_dataset
 from transformers import (
-    AutoModelForCausalLM,
-    AutoModelForMaskedLM,
-    AutoTokenizer,
+    GPT2LMHeadModel,
+    RobertaForCausalLM,
+    RobertaTokenizer,
+    GPT2Tokenizer,
     AutoConfig,
     set_seed
 )
 
-from tasks.code_completion import evaluate_token_completion, evaluate_api_completion, evaluate_api_usage_completion
+from tasks.api_completion import evaluate_api_call_completion, evaluate_api_usage_completion
+from tasks.code_completion import evaluate_code_completion
 from tasks.perplexity import evaluate_perplexity
 
 logger = logging.getLogger(__name__)
 
 MODEL_CLS = {
-    'encoder': (AutoConfig, AutoModelForMaskedLM, AutoTokenizer),
-    'decoder': (AutoConfig, AutoModelForCausalLM, AutoTokenizer)
+    'encoder': (AutoConfig, RobertaForCausalLM, RobertaTokenizer),
+    'decoder': (AutoConfig, GPT2LMHeadModel, GPT2Tokenizer)
 }
 
 
@@ -42,9 +44,10 @@ def main(cfg: omegaconf.DictConfig):
         model = model_cls.from_pretrained(cfg.model.model_name_or_path)
         tokenizer = tokenizer_cls.from_pretrained(cfg.model.model_name_or_path)
     model.to(cfg.device)
-    # for inference only
-    tokenizer.pad_token = tokenizer.eos_token
-    model.config.pad_token_id = model.config.eos_token_id
+
+    if cfg.model.model_type == 'decoder':
+        tokenizer.pad_token = tokenizer.eos_token
+        model.config.pad_token_id = model.config.eos_token_id
 
     logger.info(f"Loading test dataset: ({cfg.run.dataset_name}).")
     dataset_url = os.path.join(cfg.run.hf_user, cfg.run.dataset_name)
@@ -62,16 +65,16 @@ def main(cfg: omegaconf.DictConfig):
         loss, perplexity = evaluate_perplexity(cfg, model, tokenizer, dataset)
         logger.info(f"Loss: {round(loss, 4)} | perplexity: {round(perplexity, 4)}")
     # next-token prediction using CLM model
-    elif cfg.run.task == 'token-completion':
+    elif cfg.run.task == 'code-completion':
         logger.info("***** Evaluating token completion on input dataset *****")
         logger.info(f"  Num test samples: {len(dataset)}")
-        n_test, correct = evaluate_token_completion(cfg, model, tokenizer, dataset)
+        n_test, correct = evaluate_code_completion(cfg, model, tokenizer, dataset)
         logger.info(f"Accuracy: {round(correct / n_test, 3)} (num tests: {n_test})")
     # next-API prediction using CLM model
     elif cfg.run.task == 'call':
         logger.info("***** Evaluating API completion on input dataset *****")
         cfg.run.batch_size = 1
-        n_test, pass_1, pass_5, pass_10 = evaluate_api_completion(cfg, model, tokenizer, dataset)
+        n_test, pass_1, pass_5, pass_10 = evaluate_api_call_completion(cfg, model, tokenizer, dataset)
         logger.info(f"Number of test calls: {n_test}")
         logger.info(f"Pass@1: {round(pass_1 / n_test, 3)}")
         logger.info(f"Pass@5: {round(pass_5 / n_test, 3)}")
@@ -83,7 +86,7 @@ def main(cfg: omegaconf.DictConfig):
         evaluate_api_usage_completion(cfg, model, tokenizer, dataset)
     else:
         raise ValueError("Please select an evaluation task "
-                         "(perplexity | token-completion | call | usage")
+                         "(perplexity | code-completion | call | usage")
 
 
 if __name__ == '__main__':

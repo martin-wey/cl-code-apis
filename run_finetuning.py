@@ -5,20 +5,21 @@ import hydra
 import omegaconf
 from datasets import load_dataset
 from transformers import (
-    AutoModelForCausalLM,
-    AutoModelForMaskedLM,
-    AutoTokenizer,
+    GPT2LMHeadModel,
+    RobertaForCausalLM,
+    GPT2Tokenizer,
+    RobertaTokenizer,
     AutoConfig,
     set_seed
 )
 
-from tasks.finetuning import finetune_decoder
+from tasks.finetuning import finetune
 
 logger = logging.getLogger(__name__)
 
 MODEL_CLS = {
-    'encoder': (AutoConfig, AutoModelForMaskedLM, AutoTokenizer),
-    'decoder': (AutoConfig, AutoModelForCausalLM, AutoTokenizer)
+    'encoder': (AutoConfig, RobertaForCausalLM, RobertaTokenizer),
+    'decoder': (AutoConfig, GPT2LMHeadModel, GPT2Tokenizer)
 }
 
 
@@ -34,6 +35,7 @@ def main(cfg: omegaconf.DictConfig):
     try:
         logger.info(f"Attempting to load pre-trained model from local checkpoint ({cfg.model.model_name_or_path}).")
         config = config_cls.from_pretrained(model_path)
+        config.is_decoder = True
         model = model_cls.from_pretrained(model_path, config=config)
         tokenizer = tokenizer_cls.from_pretrained(model_path, use_fast=True)
     except:
@@ -42,8 +44,9 @@ def main(cfg: omegaconf.DictConfig):
         tokenizer = tokenizer_cls.from_pretrained(cfg.model.model_name_or_path)
     model.to(cfg.device)
 
-    tokenizer.pad_token = tokenizer.eos_token
-    model.config.pad_token_id = model.config.eos_token_id
+    if cfg.model.model_type == 'decoder':
+        tokenizer.pad_token = tokenizer.eos_token
+        model.config.pad_token_id = model.config.eos_token_id
 
     logger.info(f"Loading fine-tuning dataset: ({cfg.run.dataset_name}).")
     dataset_url = os.path.join(cfg.run.hf_user, cfg.run.dataset_name)
@@ -55,10 +58,7 @@ def main(cfg: omegaconf.DictConfig):
         domain_ds = ds.filter(lambda e: e['domain'] == domain)
         datasets.append(domain_ds)
 
-    if cfg.model.model_type == 'decoder':
-        finetune_decoder(cfg, model, tokenizer, datasets)
-    elif cfg.model.model_type == 'encoder':
-        pass
+    finetune(cfg, model, tokenizer, datasets)
 
 
 if __name__ == '__main__':

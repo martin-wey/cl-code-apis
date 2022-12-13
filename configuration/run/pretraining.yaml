@@ -6,7 +6,7 @@ train_batch_size: 12
 valid_batch_size: 12
 shuffle_buffer: 10000
 mixed_precision: fp16
-weight_decay: 0.01  # 0.1 decoder, 0.01 encoder
+weight_decay: 0.01  # decoder: 0.1 | encoder: 0.01
 learning_rate: 5e-5
 lr_scheduler_type: cosine
 num_warmup_steps: 5000

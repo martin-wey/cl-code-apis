@@ -2,8 +2,8 @@
 hf_user: martiwey
 dataset_name: gh-java-methods-small-ood-test
 
-task: call                     # perplexity | token-completion | call | usage
-domain: all                    # all | general | security | android | web | guava
+task: call    # perplexity | code-completion | call | usage
+domain: all   # all | general | security | android | web | guava
 
 # HP for the api usage completion task
 max_new_tokens: 30

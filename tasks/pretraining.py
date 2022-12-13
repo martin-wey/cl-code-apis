@@ -11,7 +11,6 @@ import torch
 import transformers
 from accelerate.logging import get_logger
 from torch.optim import AdamW
-from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import get_scheduler
 
@@ -103,7 +102,8 @@ def train(cfg: omegaconf.DictConfig,
                 progress_bar.set_description(f'step {completed_steps} - loss {track_loss}')
 
             if completed_steps % cfg.run.logging_steps == 0:
-                accelerator.log({'train/loss': track_loss, 'lr': get_lr(), 'steps': completed_steps}, step=completed_steps)
+                accelerator.log({'train/loss': track_loss, 'lr': get_lr(), 'steps': completed_steps},
+                                step=completed_steps)
 
             if completed_steps > 0 and completed_steps % cfg.run.save_checkpoint_steps == 0:
                 logger.info("Running validation and saving model checkpoint.")
