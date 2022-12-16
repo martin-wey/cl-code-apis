@@ -6,12 +6,26 @@ dataset_name: gh-java-methods-small-ood-train
 #   `joint`: fine-tuning on the whole dataset (i.e., offline).
 #   `naive`: naive sequential fine-tuning.
 #   `cumulative`: fine-tuning with access to all data from previous experience.
+#   `si`: synaptic intelligence.
+#   `ewc`: elastic weight consolidation.
+#   `lwf`: learning without forgetting.
 strategy: naive
+
+# Synaptic intelligence HP
+si_lambda: 10
+si_eps: 0.1
+
+# EWC HP
+ewc_lambda: 0.4
+
+# LwF HP
+lwf_alpha: [0, 0.5, 1.33333, 2.25, 3.2]
+lwf_temperature: 2
 
 train_batch_size: 6
 valid_batch_size: 6
 learning_rate: 5e-5
-num_epochs_per_experience: 10   # decoder: 10 | encoder: 20
+num_epochs_per_experience: 10
 patience: 2   # early-stopping
 
 # we filter out samples with ground-truth longer than `max_new_tokens`.

@@ -9,8 +9,9 @@ declare -a experiences=(
   "4 general security android web guava"
 )
 
-TASK="usage"
-STRATEGY="naive"
+MODEL=$1
+TASK=$2
+STRATEGY=$3
 
 for exp in "${experiences[@]}"; do
   id="${exp[@]:0:1}"
@@ -19,7 +20,7 @@ for exp in "${experiences[@]}"; do
   for d in "${domains[@]}"; do
     echo "exp ${id} - ${d}"
     python evaluator.py \
-      --ref "../../run_outputs/code-gpt2-small/ft_${TASK}_${STRATEGY}/exp_${id}/${TASK}_${d}/gt.txt" \
-      --pre "../../run_outputs/code-gpt2-small/ft_${TASK}_${STRATEGY}/exp_${id}/${TASK}_${d}/predictions.txt"
+      --ref "../../run_outputs/${MODEL}/ft_${STRATEGY}/exp_${id}/${TASK}_${d}/gt.txt" \
+      --pre "../../run_outputs/${MODEL}/ft_${STRATEGY}/exp_${id}/${TASK}_${d}/predictions.txt"
   done;
 done;

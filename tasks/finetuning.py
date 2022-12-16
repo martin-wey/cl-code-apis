@@ -25,7 +25,9 @@ import torch
 import transformers
 from avalanche.benchmarks import CLScenario, CLStream, CLExperience
 from avalanche.benchmarks.utils import DataAttribute, ConstantSequence, AvalancheDataset
+from avalanche.evaluation.metrics import loss_metrics
 from avalanche.training import Naive, JointTraining, Cumulative
+from avalanche.training.plugins import SynapticIntelligencePlugin, EWCPlugin, LwFPlugin
 from datasets import Dataset
 from torch.optim import AdamW
 from tqdm import tqdm
@@ -257,12 +259,7 @@ def finetune(cfg: omegaconf.DictConfig,
         loggers.append(wandb_logger)
 
     eval_plugin = avalanche.training.plugins.EvaluationPlugin(
-        avalanche.evaluation.metrics.loss_metrics(
-            epoch=True,
-            epoch_running=True,
-            experience=True,
-            stream=True
-        ),
+        loss_metrics(minibatch=True, epoch=True, experience=True, stream=True),
         loggers=loggers,
         strict_checks=False,
     )
@@ -273,12 +270,26 @@ def finetune(cfg: omegaconf.DictConfig,
     elif cfg.run.strategy == 'cumulative':
         strategy_cls = HGCumulative
     else:
-        # for all other strategies, we add plugins to the strategy
+        # for all other strategies, we add CL plugins to the strategy
         strategy_cls = HGNaive
 
     optimizer = AdamW(model.parameters(), lr=cfg.run.learning_rate)
     early_stopping = EarlyStoppingPlugin(patience=cfg.run.patience, val_stream_name='valid_stream',
                                          metric_name='Loss_Exp', mode='min', criteria='exp', verbose=True)
+    plugins = [early_stopping]
+    if cfg.run.strategy == 'si':
+        logger.info("Fine-tuning with Synaptic intelligence (si).")
+        cl_plugin = SynapticIntelligencePlugin(si_lambda=cfg.run.si_lambda, eps=cfg.run.si_eps)
+        plugins.append(cl_plugin)
+    elif cfg.run.strategy == 'ewc':
+        logger.info("Fine-tuning with EWC.")
+        cl_plugin = EWCPlugin(ewc_lambda=cfg.run.ewc_lambda)
+        plugins.append(cl_plugin)
+    elif cfg.run.strategy == 'lwf':
+        logger.info("Fine-tuning with EWC.")
+        cl_plugin = LwFPlugin(alpha=cfg.run.lwf_alpha, temperature=cfg.run.lwf_temperature)
+        plugins.append(cl_plugin)
+
     strategy = strategy_cls(
         model=model,
         optimizer=optimizer,
@@ -288,7 +299,7 @@ def finetune(cfg: omegaconf.DictConfig,
         train_mb_size=cfg.run.train_batch_size,
         eval_mb_size=cfg.run.valid_batch_size,
         eval_every=1,
-        plugins=[early_stopping],
+        plugins=plugins,
         device=cfg.device
     )
 

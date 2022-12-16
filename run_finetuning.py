@@ -21,6 +21,7 @@ MODEL_CLS = {
     'encoder': (AutoConfig, RobertaForCausalLM, RobertaTokenizer),
     'decoder': (AutoConfig, GPT2LMHeadModel, GPT2Tokenizer)
 }
+TASKS = {'general': 0, 'security': 1, 'android': 2, 'web': 3, 'guava': 4}
 
 
 @hydra.main(config_path='configuration', config_name='defaults', version_base='1.1')
@@ -56,9 +57,11 @@ def main(cfg: omegaconf.DictConfig):
     datasets = []
     for domain in cfg.run.domains:
         domain_ds = ds.filter(lambda e: e['domain'] == domain)
+        domain_ds = domain_ds.map(lambda e: {'task_id': TASKS[domain]})
+        print(domain_ds)
         datasets.append(domain_ds)
 
-    finetune(cfg, model, tokenizer, datasets)
+    # finetune(cfg, model, tokenizer, datasets)
 
 
 if __name__ == '__main__':
