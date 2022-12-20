@@ -16,7 +16,7 @@ si_lambda: 10
 si_eps: 0.1
 
 # EWC HP
-ewc_lambda: 0.4
+ewc_lambda: 0.3
 
 # LwF HP
 lwf_alpha: [0, 0.5, 1.33333, 2.25, 3.2]

@@ -58,10 +58,9 @@ def main(cfg: omegaconf.DictConfig):
     for domain in cfg.run.domains:
         domain_ds = ds.filter(lambda e: e['domain'] == domain)
         domain_ds = domain_ds.map(lambda e: {'task_id': TASKS[domain]})
-        print(domain_ds)
         datasets.append(domain_ds)
 
-    # finetune(cfg, model, tokenizer, datasets)
+    finetune(cfg, model, tokenizer, datasets)
 
 
 if __name__ == '__main__':

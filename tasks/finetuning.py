@@ -35,7 +35,7 @@ from transformers import (
     default_data_collator
 )
 
-from tasks.plugins.early_stopping import EarlyStoppingPlugin
+from tasks.plugins import EarlyStoppingPlugin, EWCPlugin
 
 logger = logging.getLogger(__name__)
 
@@ -261,7 +261,7 @@ def finetune(cfg: omegaconf.DictConfig,
     eval_plugin = avalanche.training.plugins.EvaluationPlugin(
         loss_metrics(minibatch=True, epoch=True, experience=True, stream=True),
         loggers=loggers,
-        strict_checks=False,
+        strict_checks=False
     )
 
     if cfg.run.strategy == 'joint':
@@ -286,8 +286,8 @@ def finetune(cfg: omegaconf.DictConfig,
         cl_plugin = EWCPlugin(ewc_lambda=cfg.run.ewc_lambda)
         plugins.append(cl_plugin)
     elif cfg.run.strategy == 'lwf':
-        logger.info("Fine-tuning with EWC.")
-        cl_plugin = LwFPlugin(alpha=cfg.run.lwf_alpha, temperature=cfg.run.lwf_temperature)
+        logger.info("Fine-tuning with LwF.")
+        cl_plugin = LwFPlugin(alpha=list(cfg.run.lwf_alpha), temperature=cfg.run.lwf_temperature)
         plugins.append(cl_plugin)
 
     strategy = strategy_cls(
