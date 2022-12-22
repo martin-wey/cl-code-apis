@@ -395,12 +395,6 @@ def evaluate_api_completion(cfg: omegaconf.DictConfig,
                                      f'{dataset_tokenized[step]["ground_truth"]}')
                 predictions.append(' '.join(predictions_topk))
 
-    logger.info("Exporting predictions and ground truth files...")
-    with open('predictions.txt', 'w+') as f1, open('gt.txt', 'w+') as f2:
-        for pred, gt in zip(predictions, ground_truths):
-            f1.write(pred + '\n')
-            f2.write(gt + '\n')
-
     pass_1 = 0.0
     pass_5 = 0.0
     pass_10 = 0.0

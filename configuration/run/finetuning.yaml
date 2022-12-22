@@ -8,7 +8,7 @@ dataset_name: gh-java-methods-small-ood-train
 #   `cumulative`: fine-tuning with access to all data from previous experience.
 #   `si`: synaptic intelligence.
 #   `ewc`: elastic weight consolidation.
-#   `lwf`: learning without forgetting.
+#   `agem`: average gradient episodic memory
 strategy: naive
 
 # Synaptic intelligence HP
@@ -18,9 +18,9 @@ si_eps: 0.1
 # EWC HP
 ewc_lambda: 0.3
 
-# LwF HP
-lwf_alpha: [0, 0.5, 1.33333, 2.25, 3.2]
-lwf_temperature: 2
+# AGEM HP
+agem_n_patterns_per_exp: 250
+agem_sample_size: 256
 
 train_batch_size: 6
 valid_batch_size: 6

@@ -69,16 +69,16 @@ def main(cfg: omegaconf.DictConfig):
         logger.info("***** Evaluating token completion on input dataset *****")
         logger.info(f"  Num test samples: {len(dataset)}")
         n_test, correct = evaluate_code_completion(cfg, model, tokenizer, dataset)
-        logger.info(f"Accuracy: {round(correct / n_test, 3)} (num tests: {n_test})")
+        logger.info(f"Accuracy: {round(correct / n_test, 4)} (num tests: {n_test})")
     # next-API prediction using CLM model
     elif cfg.run.task == 'call':
         logger.info("***** Evaluating API completion on input dataset *****")
         cfg.run.batch_size = 1
         n_test, pass_1, pass_5, pass_10 = evaluate_api_call_completion(cfg, model, tokenizer, dataset)
         logger.info(f"Number of test calls: {n_test}")
-        logger.info(f"Pass@1: {round(pass_1 / n_test, 3)}")
-        logger.info(f"Pass@5: {round(pass_5 / n_test, 3)}")
-        logger.info(f"Pass@10: {round(pass_10 / n_test, 3)}")
+        logger.info(f"Pass@1: {round(pass_1 / n_test, 4)}")
+        logger.info(f"Pass@5: {round(pass_5 / n_test, 4)}")
+        logger.info(f"Pass@10: {round(pass_10 / n_test, 4)}")
     # API usage statement completion using CLM model
     elif cfg.run.task == 'usage':
         logger.info("***** Evaluating API usage completion on input dataset *****")

@@ -27,7 +27,7 @@ from avalanche.benchmarks import CLScenario, CLStream, CLExperience
 from avalanche.benchmarks.utils import DataAttribute, ConstantSequence, AvalancheDataset
 from avalanche.evaluation.metrics import loss_metrics
 from avalanche.training import Naive, JointTraining, Cumulative
-from avalanche.training.plugins import SynapticIntelligencePlugin, EWCPlugin, LwFPlugin
+from avalanche.training.plugins import SynapticIntelligencePlugin, EWCPlugin, AGEMPlugin
 from datasets import Dataset
 from torch.optim import AdamW
 from tqdm import tqdm
@@ -285,9 +285,10 @@ def finetune(cfg: omegaconf.DictConfig,
         logger.info("Fine-tuning with EWC.")
         cl_plugin = EWCPlugin(ewc_lambda=cfg.run.ewc_lambda)
         plugins.append(cl_plugin)
-    elif cfg.run.strategy == 'lwf':
-        logger.info("Fine-tuning with LwF.")
-        cl_plugin = LwFPlugin(alpha=list(cfg.run.lwf_alpha), temperature=cfg.run.lwf_temperature)
+    elif cfg.run.strategy == 'agem':
+        logger.info("Fine-tuning with AGEM.")
+        cl_plugin = AGEMPlugin(patterns_per_experience=cfg.run.agem_n_patterns_per_exp,
+                               sample_size=cfg.run.agem_sample_size)
         plugins.append(cl_plugin)
 
     strategy = strategy_cls(
