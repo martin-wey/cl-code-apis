@@ -27,7 +27,7 @@ from avalanche.benchmarks import CLScenario, CLStream, CLExperience
 from avalanche.benchmarks.utils import DataAttribute, ConstantSequence, AvalancheDataset
 from avalanche.evaluation.metrics import loss_metrics
 from avalanche.training import Naive, JointTraining, Cumulative
-from avalanche.training.plugins import SynapticIntelligencePlugin, EWCPlugin, AGEMPlugin
+from avalanche.training.plugins import SynapticIntelligencePlugin
 from datasets import Dataset
 from torch.optim import AdamW
 from tqdm import tqdm
@@ -35,7 +35,7 @@ from transformers import (
     default_data_collator
 )
 
-from tasks.plugins import EarlyStoppingPlugin, EWCPlugin
+from tasks.plugins import EarlyStoppingPlugin, EWCPlugin, AGEMPlugin
 
 logger = logging.getLogger(__name__)
 
@@ -217,6 +217,8 @@ def finetune(cfg: omegaconf.DictConfig,
     for i, dataset in enumerate(datasets):
         logger.info(f"Preprocessing OOD dataset #{i}")
         train_data, valid_data = preprocess_dataset(cfg, dataset, tokenizer)
+        train_data = train_data.select(list(range(20)))
+        valid_data = valid_data.select(list(range(20)))
         train_datasets.append(train_data)
         valid_datasets.append(valid_data)
 

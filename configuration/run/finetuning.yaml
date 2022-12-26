@@ -20,7 +20,7 @@ ewc_lambda: 0.3
 
 # AGEM HP
 agem_n_patterns_per_exp: 250
-agem_sample_size: 256
+agem_sample_size: 6
 
 train_batch_size: 6
 valid_batch_size: 6
