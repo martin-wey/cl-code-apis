@@ -7,7 +7,6 @@ from avalanche.benchmarks.utils import make_classification_dataset
 from avalanche.benchmarks.utils.data_loader import (
     GroupBalancedInfiniteDataLoader,
 )
-from avalanche.models import avalanche_forward
 from avalanche.training.plugins.strategy_plugin import SupervisedPlugin
 from transformers import default_data_collator
 
@@ -52,7 +51,7 @@ class AGEMPlugin(SupervisedPlugin):
             strategy.model.train()
             strategy.optimizer.zero_grad()
             mb = self.sample_from_memory()
-            xref, yref, tid = mb['input_ids'], mb['labels'], -1
+            xref, yref, tid = mb['input_ids'].squeeze(), mb['labels'].squeeze(), -1
             xref, yref = xref.to(strategy.device), yref.to(strategy.device)
 
             out = strategy.model(input_ids=xref, labels=yref)

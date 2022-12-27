@@ -217,8 +217,6 @@ def finetune(cfg: omegaconf.DictConfig,
     for i, dataset in enumerate(datasets):
         logger.info(f"Preprocessing OOD dataset #{i}")
         train_data, valid_data = preprocess_dataset(cfg, dataset, tokenizer)
-        train_data = train_data.select(list(range(20)))
-        valid_data = valid_data.select(list(range(20)))
         train_datasets.append(train_data)
         valid_datasets.append(valid_data)
 
