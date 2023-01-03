@@ -14,7 +14,6 @@ from transformers import (
 )
 
 from tasks.api_completion import evaluate_api_call_completion, evaluate_api_usage_completion
-from tasks.code_completion import evaluate_code_completion
 from tasks.perplexity import evaluate_perplexity
 
 logger = logging.getLogger(__name__)
@@ -58,19 +57,11 @@ def main(cfg: omegaconf.DictConfig):
         logger.info(f"Filtering dataset to keep sample of domain: `{cfg.run.domain}`")
         dataset = dataset.filter(lambda e: e['domain'] == cfg.run.domain, num_proc=cfg.run.preprocessing_num_workers)
 
-    # loss and perplexity using CLM or MLM model
     if cfg.run.task == 'perplexity':
         logger.info("***** Evaluating loss and perplexity on input dataset ******")
         logger.info(f"  Num test samples: {len(dataset)}")
         loss, perplexity = evaluate_perplexity(cfg, model, tokenizer, dataset)
         logger.info(f"Loss: {round(loss, 4)} | perplexity: {round(perplexity, 4)}")
-    # next-token prediction using CLM model
-    elif cfg.run.task == 'code-completion':
-        logger.info("***** Evaluating token completion on input dataset *****")
-        logger.info(f"  Num test samples: {len(dataset)}")
-        n_test, correct = evaluate_code_completion(cfg, model, tokenizer, dataset)
-        logger.info(f"Accuracy: {round(correct / n_test, 4)} (num tests: {n_test})")
-    # next-API prediction using CLM model
     elif cfg.run.task == 'call':
         logger.info("***** Evaluating API completion on input dataset *****")
         cfg.run.batch_size = 1
@@ -79,7 +70,6 @@ def main(cfg: omegaconf.DictConfig):
         logger.info(f"Pass@1: {round(pass_1 / n_test, 4)}")
         logger.info(f"Pass@5: {round(pass_5 / n_test, 4)}")
         logger.info(f"Pass@10: {round(pass_10 / n_test, 4)}")
-    # API usage statement completion using CLM model
     elif cfg.run.task == 'usage':
         logger.info("***** Evaluating API usage completion on input dataset *****")
         cfg.run.batch_size = 1

@@ -51,7 +51,9 @@ class AGEMPlugin(SupervisedPlugin):
             strategy.model.train()
             strategy.optimizer.zero_grad()
             mb = self.sample_from_memory()
-            xref, yref, tid = mb['input_ids'].squeeze(), mb['labels'].squeeze(), -1
+            xref, yref, tid = mb['input_ids'], mb['labels'], -1
+            if xref.dim == 3:
+                xref, yref = xref.squeeze(), yref.squeeze()
             xref, yref = xref.to(strategy.device), yref.to(strategy.device)
 
             out = strategy.model(input_ids=xref, labels=yref)
