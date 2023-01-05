@@ -35,7 +35,7 @@ from transformers import (
     default_data_collator
 )
 
-from tasks.plugins import EarlyStoppingPlugin, EWCPlugin, AGEMPlugin, RWalkPlugin
+from tasks.plugins import EarlyStoppingPlugin, EWCPlugin, AGEMPlugin, RWalkPlugin, ReplayPlugin
 
 logger = logging.getLogger(__name__)
 
@@ -294,6 +294,10 @@ def finetune(cfg: omegaconf.DictConfig,
         logger.info("Fine-tuning with RWalk.")
         cl_plugin = RWalkPlugin(ewc_lambda=cfg.run.rwalk_ewc_lambda, ewc_alpha=cfg.run.rwalk_ewc_alpha,
                                 delta_t=cfg.run.rwalk_delta_t)
+        plugins.append(cl_plugin)
+    elif cfg.run.strategy == 'replay':
+        logger.info("Fine-tuning with Replay.")
+        cl_plugin = ReplayPlugin(mem_size=cfg.run.replay_mem_size, batch_size=2, batch_size_mem=2)
         plugins.append(cl_plugin)
 
     strategy = strategy_cls(

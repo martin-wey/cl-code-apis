@@ -30,6 +30,7 @@ lwf_alpha: [0, 0.5, 1.33333, 2.25, 3.2]
 lwf_temperature: 2
 
 # Replay HP
+replay_mem_size: 200
 
 # RWalk HP
 rwalk_ewc_lambda: 0.1
