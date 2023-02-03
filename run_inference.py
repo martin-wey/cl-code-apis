@@ -49,8 +49,14 @@ def main(cfg: omegaconf.DictConfig):
         model.config.pad_token_id = model.config.eos_token_id
 
     logger.info(f"Loading test dataset: ({cfg.run.dataset_name}).")
-    dataset_url = os.path.join(cfg.run.hf_user, cfg.run.dataset_name)
-    dataset = load_dataset(dataset_url, split='train', use_auth_token=True)
+    if cfg.run.hf_user is not None:
+        # load dataset from HF hub
+        dataset_url = os.path.join(cfg.run.hf_user, cfg.run.dataset_name)
+        dataset = load_dataset(dataset_url, split='train', use_auth_token=True)
+    else:
+        # load dataset locally
+        dataset_path = os.path.join(cfg.run.base_path, cfg.run.dataset_name)
+        dataset = load_dataset(dataset_path, split='train')
     dataset = dataset.remove_columns(['repo_name', 'method_path', 'method_name', 'docstring'])
 
     if cfg.run.domain != 'all':

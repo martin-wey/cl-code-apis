@@ -46,7 +46,7 @@ def main(cfg: omegaconf.DictConfig):
         gradient_accumulation_steps=cfg.run.gradient_accumulation_steps,
         **accelerator_log_kwargs)
     if cfg.use_wandb:
-        accelerator.init_trackers(project_name='cl-code')
+        accelerator.init_trackers(project_name=cfg.wandb.setup.project)
     logger.info(accelerator.state, main_process_only=True)
 
     if accelerator.is_local_main_process:
@@ -91,10 +91,20 @@ def main(cfg: omegaconf.DictConfig):
     if cfg.run.gradient_checkpointing:
         model.gradient_checkpointing_enable()
 
-    train_dataset = load_dataset(cfg.run.train_dataset_name, split='train', use_auth_token=True)
+    if cfg.run.hf_user is not None:
+        # load dataset from HF hub
+        train_dataset_url = os.path.join(cfg.run.hf_user, cfg.run.train_dataset_name)
+        train_dataset = load_dataset(train_dataset_url, split='train', use_auth_token=True)
+        valid_dataset_url = os.path.join(cfg.run.hf_user, cfg.run.valid_dataset_name)
+        valid_dataset = load_dataset(cfg.run.valid_dataset_name, split='train', use_auth_token=True)
+    else:
+        # load dataset locally
+        train_dataset_path = os.path.join(cfg.run.base_path, cfg.run.train_dataset_name)
+        train_dataset = load_dataset(train_dataset_path, split='train')
+        valid_dataset_path = os.path.join(cfg.run.base_path, cfg.run.valid_dataset_name)
+        valid_dataset = load_dataset(valid_dataset_path, split='train')
     train_dataset = train_dataset.remove_columns(
         [cname for cname in train_dataset.column_names if cname != 'source_code'])
-    valid_dataset = load_dataset(cfg.run.valid_dataset_name, split='train', use_auth_token=True)
     valid_dataset = valid_dataset.remove_columns(
         [cname for cname in valid_dataset.column_names if cname != 'source_code'])
 

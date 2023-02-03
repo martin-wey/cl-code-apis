@@ -2,7 +2,7 @@
 model_name: code-gpt2-small
 model_type: decoder
 
-model_base_path: ./run_outputs/code-gpt2-small
+model_base_path: ./models/code-gpt2-small
 model_config_path: ./configuration/model/code-gpt2-small_config.json
 
 model_name_or_path: null

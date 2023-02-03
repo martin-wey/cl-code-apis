@@ -2,7 +2,7 @@
 model_name: code-roberta-base
 model_type: encoder
 
-model_base_path: ./run_outputs/code-roberta-base
+model_base_path: ./models/code-roberta-base
 model_config_path: ./configuration/model/code-roberta-base_config.json
 
 model_name_or_path: null

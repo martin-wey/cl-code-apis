@@ -1,6 +1,6 @@
 ---
-hf_user: martiwey
-dataset_name: gh-java-methods-small-ood-train
+hf_user: null
+dataset_name: data/gh-java-methods-small-ood-train
 
 # the strategy used to fine-tune the model: joint | naive | cumulative.
 #   `joint`: fine-tuning on the whole dataset (i.e., offline).

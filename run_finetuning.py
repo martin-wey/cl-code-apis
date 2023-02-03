@@ -50,13 +50,19 @@ def main(cfg: omegaconf.DictConfig):
         model.config.pad_token_id = model.config.eos_token_id
 
     logger.info(f"Loading fine-tuning dataset: ({cfg.run.dataset_name}).")
-    dataset_url = os.path.join(cfg.run.hf_user, cfg.run.dataset_name)
-    ds = load_dataset(dataset_url, split='train', use_auth_token=True)
-    ds = ds.remove_columns(['repo_name', 'method_path', 'method_name', 'docstring'])
+    if cfg.run.hf_user is not None:
+        # load dataset from HF hub
+        dataset_url = os.path.join(cfg.run.hf_user, cfg.run.dataset_name)
+        dataset = load_dataset(dataset_url, split='train', use_auth_token=True)
+    else:
+        # load dataset locally
+        dataset_path = os.path.join(cfg.run.base_path, cfg.run.dataset_name)
+        dataset = load_dataset(dataset_path, split='train')
+    dataset = dataset.remove_columns(['repo_name', 'method_path', 'method_name', 'docstring'])
 
     datasets = []
     for domain in cfg.run.domains:
-        domain_ds = ds.filter(lambda e: e['domain'] == domain)
+        domain_ds = dataset.filter(lambda e: e['domain'] == domain)
         domain_ds = domain_ds.map(lambda e: {'task_id': TASKS[domain]})
         datasets.append(domain_ds)
 

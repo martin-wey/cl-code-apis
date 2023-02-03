@@ -1,6 +1,7 @@
 ---
-train_dataset_name: martiwey/gh-java-methods-small-id-train
-valid_dataset_name: martiwey/gh-java-methods-small-id-valid
+hf_user: null
+train_dataset_name: data/gh-java-methods-small-id-train
+valid_dataset_name: data/gh-java-methods-small-id-valid
 
 train_batch_size: 12
 valid_batch_size: 12

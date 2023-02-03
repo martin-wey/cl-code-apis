@@ -1,6 +1,6 @@
 ---
-hf_user: martiwey
-dataset_name: gh-java-methods-small-ood-test
+hf_user: null
+dataset_name: data/gh-java-methods-small-ood-test
 
 task: call    # perplexity | code-completion | call | usage
 domain: all   # all | general | security | android | web | guava

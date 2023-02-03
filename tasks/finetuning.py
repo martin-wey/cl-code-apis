@@ -252,7 +252,7 @@ def finetune(cfg: omegaconf.DictConfig,
     loggers.append(avalanche.logging.InteractiveLogger())
     if cfg.use_wandb:
         wandb_logger = avalanche.logging.WandBLogger(
-            project_name='cl-code',
+            project_name=cfg.wandb.setup.project,
             run_name=f'{cfg.model.model_name}_ft_{cfg.run.strategy}',
             config=vars(cfg)
         )
