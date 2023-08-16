@@ -1,6 +1,6 @@
-# Continual learning for OOD generalization in PLMs of code
+# On the Usage of Continual Learning for Out-of-Distribution Generalization in Pre-trained Languages Models of Code
 
-This is the replication package associated with the FSE 23' submission:
+This is the official replication package associated with the FSE 23' submission:
 ```On the Usage of Continual Learning for Out-of-Distribution Generalization" in Pre-trained Languages Models of Code```.
 
 In this readme, we provide details on how to setup our codebase for experimenting with continual fine-tuning. We include links to download our datasets and models locally. Unfortunately, we cannot leverage HuggingFace's hub as it does not allow double-blind sharing of repositories.
